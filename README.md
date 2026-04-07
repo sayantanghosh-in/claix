@@ -85,6 +85,38 @@ claix sync                    # Manually sync session data
 
 claix reads session data from `~/.claude/projects/` where Claude Code stores conversation history. It builds a local index with your tags, notes, and metadata — **it never modifies Claude's files**.
 
+### Dashboard Header
+
+When you launch `claix`, the top of the TUI shows a dashboard with three lines of aggregate stats:
+
+**Line 1 — Session Summary**
+```
+53 sessions  ● 3 active  ✓ 36 done  ○ 14 empty  │  10 projects
+```
+- **53 sessions** — total number of Claude Code sessions found across all projects
+- **● 3 active** — sessions where your last message hasn't been responded to (you may want to resume these)
+- **✓ 36 done** — sessions where Claude responded last (conversation reached a natural end)
+- **○ 14 empty** — sessions that were opened but had no messages (hidden from the list by default)
+- **10 projects** — number of unique project directories where sessions were started
+
+**Line 2 — Activity Sparkline & Usage**
+```
+▁▃▇▅▂▆█▃▁▄▆▂▃▅▇▅▂▁▃▆█▅▃▁▂▄▇  28d  │  11.7k msgs  1.9k tools  │  opus 325.7k  sonnet 2.6k
+```
+- **Sparkline** (`▁▃▇▅...`) — a 28-day activity chart where each bar represents one day's message count. Taller bars = more active days. Gives you a quick sense of your usage pattern over the last month.
+- **28d** — the time range the sparkline covers (28 days)
+- **11.7k msgs** — total messages exchanged with Claude across all sessions
+- **1.9k tools** — total tool calls Claude made (file reads, edits, bash commands, etc.)
+- **opus 325.7k / sonnet 2.6k** — token usage broken down by Claude model. This data comes from Claude Code's internal `stats-cache.json`.
+
+**Line 3 — Top Projects**
+```
+git > my-project ████████ 13    git > another-project █████ 7    <user> > git ████ 6
+```
+- Shows your **top 3 most active projects** ranked by number of sessions
+- The **bar chart** (█░) is proportional — the project with the most sessions gets a full bar, others are scaled relative to it
+- The **number** is the total session count for that project
+
 ### Auto-sync with Hooks
 
 After running `claix install`, a Claude Code hook is configured to run `claix sync` whenever a session ends. This means your session index stays up to date without any manual effort.

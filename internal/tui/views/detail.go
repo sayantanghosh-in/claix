@@ -1,6 +1,6 @@
 package views
 
-// DetailModel shows full details of a selected session.
+// DetailModel will show full details of a selected session.
 //
 // TODO:
 // - Display session ID, project path, git branch, timestamps
