@@ -1,6 +1,6 @@
 # Binaries
 bin/
-claix
+/claix
 *.exe
 *.dll
 *.so
