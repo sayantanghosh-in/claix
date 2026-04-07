@@ -7,10 +7,12 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/sayantanghosh-in/claix/internal/scanner"
+	"github.com/sayantanghosh-in/claix/internal/store"
 )
 
 // =====================================================================
@@ -36,17 +38,60 @@ type Model struct {
 	resuming    *scanner.Session  // Session to resume after TUI exits
 	loaded      bool              // Data has finished loading
 	panelScroll int               // Scroll offset for the right detail panel
+
+	// Search mode — activated by pressing '/'
+	searching   bool            // Whether we're in search mode
+	searchQuery string          // Current search text (kept when pressing Enter)
+	searchInput textinput.Model // Bubbles textinput component for search
+
+	// Tag mode — activated by pressing 't' on a session
+	tagging  bool            // Whether we're adding a tag
+	tagInput textinput.Model // Textinput for entering a tag
+
+	// Notes mode — activated by pressing 'n' on a session
+	noting    bool            // Whether we're editing notes
+	noteInput textinput.Model // Textinput for entering a note
+
+	// Store — claix's own metadata (tags, notes, pins), loaded once at startup
+	store *store.Store
 }
 
 // dataLoadedMsg is sent when session scan + stats load complete.
 type dataLoadedMsg struct {
 	sessions []scanner.Session
 	stats    *scanner.Stats
+	store    *store.Store
 	err      error
 }
 
 func New() Model {
-	return Model{loaded: false}
+	// Initialize the search textinput
+	si := textinput.New()
+	si.Placeholder = "Search sessions..."
+	si.CharLimit = 100
+	si.Width = 40
+	si.Prompt = "/ "
+
+	// Initialize the tag textinput
+	ti := textinput.New()
+	ti.Placeholder = "Enter tag..."
+	ti.CharLimit = 50
+	ti.Width = 30
+	ti.Prompt = "Tag: "
+
+	// Initialize the note textinput
+	ni := textinput.New()
+	ni.Placeholder = "Enter note..."
+	ni.CharLimit = 200
+	ni.Width = 50
+	ni.Prompt = "Note: "
+
+	return Model{
+		loaded:      false,
+		searchInput: si,
+		tagInput:    ti,
+		noteInput:   ni,
+	}
 }
 
 func (m Model) Init() tea.Cmd {
@@ -56,7 +101,9 @@ func (m Model) Init() tea.Cmd {
 			return dataLoadedMsg{err: err}
 		}
 		stats, _ := scanner.LoadStats("")
-		return dataLoadedMsg{sessions: sessions, stats: stats}
+		// Load claix's own store (tags, notes, pins)
+		st, _ := store.Load()
+		return dataLoadedMsg{sessions: sessions, stats: stats, store: st}
 	}
 }
 
@@ -72,7 +119,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.allSessions = msg.sessions
 		m.stats = msg.stats
+		m.store = msg.store
 
+		// Filter out empty sessions for the default view
 		var filtered []scanner.Session
 		for _, s := range msg.sessions {
 			if s.Status != scanner.StatusEmpty {
@@ -88,6 +137,93 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// ── Search mode: forward keys to the search textinput ──
+		if m.searching {
+			switch msg.String() {
+			case "esc":
+				// Exit search, clear filter, restore full list
+				m.searching = false
+				m.searchQuery = ""
+				m.searchInput.SetValue("")
+				m.sessions = m.filterSessions("")
+				m.cursor = 0
+				m.panelScroll = 0
+				return m, nil
+			case "enter":
+				// Keep the current filter and switch back to navigation mode
+				m.searching = false
+				m.searchQuery = m.searchInput.Value()
+				return m, nil
+			case "ctrl+c":
+				m.quitting = true
+				return m, tea.Quit
+			default:
+				// Let the textinput handle the key (typing, backspace, etc.)
+				var cmd tea.Cmd
+				m.searchInput, cmd = m.searchInput.Update(msg)
+				// Filter sessions in real-time as the user types
+				m.sessions = m.filterSessions(m.searchInput.Value())
+				m.cursor = 0
+				m.panelScroll = 0
+				return m, cmd
+			}
+		}
+
+		// ── Tag mode: forward keys to the tag textinput ──
+		if m.tagging {
+			switch msg.String() {
+			case "esc":
+				m.tagging = false
+				m.tagInput.SetValue("")
+				return m, nil
+			case "enter":
+				tag := strings.TrimSpace(m.tagInput.Value())
+				if tag != "" && len(m.sessions) > 0 && m.cursor < len(m.sessions) && m.store != nil {
+					sessionID := m.sessions[m.cursor].ID
+					m.store.AddTag(sessionID, tag)
+					_ = m.store.Save() // Persist to disk
+				}
+				m.tagging = false
+				m.tagInput.SetValue("")
+				return m, nil
+			case "ctrl+c":
+				m.quitting = true
+				return m, tea.Quit
+			default:
+				var cmd tea.Cmd
+				m.tagInput, cmd = m.tagInput.Update(msg)
+				return m, cmd
+			}
+		}
+
+		// ── Notes mode: forward keys to the note textinput ──
+		if m.noting {
+			switch msg.String() {
+			case "esc":
+				m.noting = false
+				m.noteInput.SetValue("")
+				return m, nil
+			case "enter":
+				note := strings.TrimSpace(m.noteInput.Value())
+				if note != "" && len(m.sessions) > 0 && m.cursor < len(m.sessions) && m.store != nil {
+					sessionID := m.sessions[m.cursor].ID
+					m.store.SetNotes(sessionID, note)
+					_ = m.store.Save() // Persist to disk
+				}
+				m.noting = false
+				m.noteInput.SetValue("")
+				return m, nil
+			case "ctrl+c":
+				m.quitting = true
+				return m, tea.Quit
+			default:
+				var cmd tea.Cmd
+				m.noteInput, cmd = m.noteInput.Update(msg)
+				return m, cmd
+			}
+		}
+
+		// ── Normal navigation mode ──
 		switch msg.String() {
 		case "q", "ctrl+c":
 			m.quitting = true
@@ -95,19 +231,43 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
-				m.panelScroll = 0 // Reset panel scroll when switching sessions
+				m.panelScroll = 0
 			}
 		case "down", "j":
 			if m.cursor < len(m.sessions)-1 {
 				m.cursor++
-				m.panelScroll = 0 // Reset panel scroll when switching sessions
+				m.panelScroll = 0
 			}
-		// Scroll the right detail panel up/down with left/right or shift+up/down
 		case "right", "l", "shift+down":
 			m.panelScroll++
 		case "left", "h", "shift+up":
 			if m.panelScroll > 0 {
 				m.panelScroll--
+			}
+		case "/":
+			// Enter search mode — focus the search textinput
+			m.searching = true
+			m.searchInput.Focus()
+			return m, textinput.Blink
+		case "t":
+			// Enter tag mode — focus the tag textinput
+			if len(m.sessions) > 0 && m.cursor < len(m.sessions) {
+				m.tagging = true
+				m.tagInput.SetValue("")
+				m.tagInput.Focus()
+				return m, textinput.Blink
+			}
+		case "n":
+			// Enter notes mode — focus the note textinput
+			if len(m.sessions) > 0 && m.cursor < len(m.sessions) {
+				m.noting = true
+				// Pre-fill with existing note if any
+				if m.store != nil {
+					meta := m.store.GetMeta(m.sessions[m.cursor].ID)
+					m.noteInput.SetValue(meta.Notes)
+				}
+				m.noteInput.Focus()
+				return m, textinput.Blink
 			}
 		case "enter":
 			if len(m.sessions) > 0 && m.cursor < len(m.sessions) {
@@ -120,6 +280,44 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+// filterSessions returns non-empty sessions matching the query string.
+// It checks title, preview, git branch, project path, and tags (from the store).
+// If query is empty, all non-empty sessions are returned.
+func (m Model) filterSessions(query string) []scanner.Session {
+	var result []scanner.Session
+	q := strings.ToLower(strings.TrimSpace(query))
+
+	for _, s := range m.allSessions {
+		if s.Status == scanner.StatusEmpty {
+			continue
+		}
+		// If no query, include all non-empty sessions
+		if q == "" {
+			result = append(result, s)
+			continue
+		}
+		// Check each searchable field for a substring match
+		if strings.Contains(strings.ToLower(s.Title), q) ||
+			strings.Contains(strings.ToLower(s.Preview), q) ||
+			strings.Contains(strings.ToLower(s.GitBranch), q) ||
+			strings.Contains(strings.ToLower(s.ProjectPath), q) {
+			result = append(result, s)
+			continue
+		}
+		// Also check tags from the store
+		if m.store != nil {
+			meta := m.store.GetMeta(s.ID)
+			for _, tag := range meta.Tags {
+				if strings.Contains(strings.ToLower(tag), q) {
+					result = append(result, s)
+					break
+				}
+			}
+		}
+	}
+	return result
 }
 
 // =====================================================================
@@ -211,6 +409,18 @@ func (m Model) View() string {
 		b.WriteString(strings.Repeat(" ", pad))
 		b.WriteString(" " + divider + " ")
 		b.WriteString(right)
+		b.WriteString("\n")
+	}
+
+	// ── Bottom bar: show search/tag/note input when active ──
+	if m.searching {
+		b.WriteString(searchBarStyle.Render(" " + m.searchInput.View()))
+		b.WriteString("\n")
+	} else if m.tagging {
+		b.WriteString(inputBarStyle.Render(" " + m.tagInput.View()))
+		b.WriteString("\n")
+	} else if m.noting {
+		b.WriteString(inputBarStyle.Render(" " + m.noteInput.View()))
 		b.WriteString("\n")
 	}
 
@@ -463,7 +673,7 @@ func (m Model) renderLeftColumn(width int) []string {
 			lines = append(lines, fmt.Sprintf("   %s   %s", border, titleRendered))
 		}
 
-		// Line 3: file activity summary (compact)
+		// Line 3: file activity + tags (compact)
 		var actParts []string
 		readCount := len(s.Activity.FilesRead)
 		editCount := len(s.Activity.FilesEdited)
@@ -474,6 +684,17 @@ func (m Model) renderLeftColumn(width int) []string {
 			summary := s.Activity.RepoSummary
 			if len(summary) > 35 { summary = summary[:35] + "..." }
 			actParts = append(actParts, summary)
+		}
+		// Show tags from the store on the card (if any)
+		if m.store != nil {
+			meta := m.store.GetMeta(s.ID)
+			if len(meta.Tags) > 0 {
+				var tagStrs []string
+				for _, tag := range meta.Tags {
+					tagStrs = append(tagStrs, tagStyle.Render("#"+tag))
+				}
+				actParts = append(actParts, strings.Join(tagStrs, " "))
+			}
 		}
 		actLine := strings.Join(actParts, "  │  ")
 		if actLine != "" {
@@ -491,9 +712,12 @@ func (m Model) renderLeftColumn(width int) []string {
 	if len(m.sessions) > visibleCards {
 		lines = append(lines, dimStyle.Render(fmt.Sprintf("  %d-%d of %d sessions (empty hidden)", start+1, end, len(m.sessions))))
 	}
-	lines = append(lines, fmt.Sprintf("  %s %s  %s %s  %s %s  %s %s",
+	lines = append(lines, fmt.Sprintf("  %s %s  %s %s  %s %s  %s %s  %s %s  %s %s  %s %s",
 		helpKeyStyle.Render("↑↓"), helpDescStyle.Render("navigate"),
-		helpKeyStyle.Render("←→"), helpDescStyle.Render("scroll panel"),
+		helpKeyStyle.Render("←→"), helpDescStyle.Render("scroll"),
+		helpKeyStyle.Render("/"), helpDescStyle.Render("search"),
+		helpKeyStyle.Render("t"), helpDescStyle.Render("tag"),
+		helpKeyStyle.Render("n"), helpDescStyle.Render("note"),
 		helpKeyStyle.Render("enter"), helpDescStyle.Render("resume"),
 		helpKeyStyle.Render("q"), helpDescStyle.Render("quit"),
 	))
@@ -628,6 +852,36 @@ func (m Model) renderRightColumn(width int) []string {
 			repos := strings.Split(s.Activity.RepoSummary, ", ")
 			for _, repo := range repos {
 				lines = append(lines, "   "+normalItemStyle.Render(repo))
+			}
+		}
+	}
+
+	// ── Tags (from claix store) ──
+	if m.store != nil {
+		meta := m.store.GetMeta(s.ID)
+		if len(meta.Tags) > 0 {
+			lines = append(lines, "")
+			lines = append(lines, dimStyle.Render("  "+strings.Repeat("─", width-4)))
+			lines = append(lines, "")
+			lines = append(lines, panelHeaderStyle.Render("  Tags"))
+			lines = append(lines, "")
+			var tagStrs []string
+			for _, tag := range meta.Tags {
+				tagStrs = append(tagStrs, tagStyle.Render("#"+tag))
+			}
+			lines = append(lines, "  "+strings.Join(tagStrs, "  "))
+		}
+
+		// ── Notes (from claix store) ──
+		if meta.Notes != "" {
+			lines = append(lines, "")
+			lines = append(lines, dimStyle.Render("  "+strings.Repeat("─", width-4)))
+			lines = append(lines, "")
+			lines = append(lines, panelHeaderStyle.Render("  Notes"))
+			lines = append(lines, "")
+			wrapped := wordWrap(meta.Notes, wrapWidth)
+			for _, wl := range wrapped {
+				lines = append(lines, "  "+normalItemStyle.Render(wl))
 			}
 		}
 	}

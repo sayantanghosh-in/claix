@@ -19,6 +19,8 @@ type keyMap struct {
 	Quit   key.Binding
 	Help   key.Binding
 	Search key.Binding
+	Tag    key.Binding
+	Note   key.Binding
 }
 
 // keys is the global instance of our key bindings.
@@ -47,5 +49,13 @@ var keys = keyMap{
 	Search: key.NewBinding(
 		key.WithKeys("/"),
 		key.WithHelp("/", "search"),
+	),
+	Tag: key.NewBinding(
+		key.WithKeys("t"),
+		key.WithHelp("t", "add tag"),
+	),
+	Note: key.NewBinding(
+		key.WithKeys("n"),
+		key.WithHelp("n", "add note"),
 	),
 }

@@ -114,4 +114,17 @@ var (
 			Foreground(colorWarning).
 			Italic(true).
 			Padding(2, 4)
+
+	// ── Tag style (shown on cards and detail panel) ──
+	tagStyle = lipgloss.NewStyle().
+			Foreground(colorPR)
+
+	// ── Search bar style (shown at bottom when searching) ──
+	searchBarStyle = lipgloss.NewStyle().
+			Foreground(colorSecondary).
+			Bold(true)
+
+	// ── Generic input bar style (for tag/note input at bottom) ──
+	inputBarStyle = lipgloss.NewStyle().
+			Foreground(colorText)
 )
