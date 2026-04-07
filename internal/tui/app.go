@@ -44,9 +44,12 @@ type Model struct {
 	searchQuery string          // Current search text (kept when pressing Enter)
 	searchInput textinput.Model // Bubbles textinput component for search
 
-	// Tag mode — activated by pressing 't' on a session
-	tagging  bool            // Whether we're adding a tag
-	tagInput textinput.Model // Textinput for entering a tag
+	// Tag mode — activated by pressing 't' to add, 'x' to remove
+	tagging     bool            // Whether we're adding a tag
+	tagInput    textinput.Model // Textinput for entering a tag
+	removingTag bool            // Whether we're removing a tag (press 'x')
+	tagOptions  []string        // List of tags on the selected session (for removal picker)
+	tagCursor   int             // Which tag is highlighted in the removal picker
 
 	// Notes mode — activated by pressing 'n' on a session
 	noting    bool            // Whether we're editing notes
@@ -196,6 +199,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		// ── Tag removal mode: pick a tag to remove ──
+		if m.removingTag {
+			switch msg.String() {
+			case "esc", "q":
+				m.removingTag = false
+				return m, nil
+			case "up", "k":
+				if m.tagCursor > 0 {
+					m.tagCursor--
+				}
+			case "down", "j":
+				if m.tagCursor < len(m.tagOptions)-1 {
+					m.tagCursor++
+				}
+			case "enter":
+				// Remove the selected tag
+				if m.tagCursor < len(m.tagOptions) && len(m.sessions) > 0 && m.cursor < len(m.sessions) && m.store != nil {
+					sessionID := m.sessions[m.cursor].ID
+					m.store.RemoveTag(sessionID, m.tagOptions[m.tagCursor])
+					_ = m.store.Save()
+				}
+				m.removingTag = false
+				return m, nil
+			case "ctrl+c":
+				m.quitting = true
+				return m, tea.Quit
+			}
+			return m, nil
+		}
+
 		// ── Notes mode: forward keys to the note textinput ──
 		if m.noting {
 			switch msg.String() {
@@ -256,6 +289,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.tagInput.SetValue("")
 				m.tagInput.Focus()
 				return m, textinput.Blink
+			}
+		case "x":
+			// Enter tag removal mode — show a picker of existing tags
+			if len(m.sessions) > 0 && m.cursor < len(m.sessions) && m.store != nil {
+				meta := m.store.GetMeta(m.sessions[m.cursor].ID)
+				if len(meta.Tags) > 0 {
+					m.removingTag = true
+					m.tagOptions = meta.Tags
+					m.tagCursor = 0
+				}
 			}
 		case "n":
 			// Enter notes mode — focus the note textinput
@@ -422,6 +465,18 @@ func (m Model) View() string {
 	} else if m.noting {
 		b.WriteString(inputBarStyle.Render(" " + m.noteInput.View()))
 		b.WriteString("\n")
+	} else if m.removingTag {
+		// Show a tag picker — user selects which tag to remove
+		b.WriteString(inputBarStyle.Render(" Remove tag (↑↓ select, enter remove, esc cancel):"))
+		b.WriteString("\n")
+		for i, tag := range m.tagOptions {
+			if i == m.tagCursor {
+				b.WriteString("   " + selectedItemStyle.Render("▸ "+tag))
+			} else {
+				b.WriteString("     " + dimStyle.Render(tag))
+			}
+			b.WriteString("\n")
+		}
 	}
 
 	return b.String()
@@ -712,11 +767,12 @@ func (m Model) renderLeftColumn(width int) []string {
 	if len(m.sessions) > visibleCards {
 		lines = append(lines, dimStyle.Render(fmt.Sprintf("  %d-%d of %d sessions (empty hidden)", start+1, end, len(m.sessions))))
 	}
-	lines = append(lines, fmt.Sprintf("  %s %s  %s %s  %s %s  %s %s  %s %s  %s %s  %s %s",
+	lines = append(lines, fmt.Sprintf("  %s %s  %s %s  %s %s  %s %s  %s %s  %s %s  %s %s  %s %s",
 		helpKeyStyle.Render("↑↓"), helpDescStyle.Render("navigate"),
 		helpKeyStyle.Render("←→"), helpDescStyle.Render("scroll"),
 		helpKeyStyle.Render("/"), helpDescStyle.Render("search"),
 		helpKeyStyle.Render("t"), helpDescStyle.Render("tag"),
+		helpKeyStyle.Render("x"), helpDescStyle.Render("untag"),
 		helpKeyStyle.Render("n"), helpDescStyle.Render("note"),
 		helpKeyStyle.Render("enter"), helpDescStyle.Render("resume"),
 		helpKeyStyle.Render("q"), helpDescStyle.Render("quit"),

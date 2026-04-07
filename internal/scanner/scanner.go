@@ -149,11 +149,16 @@ type toolInput struct {
 // Pass "" for claudeHome to use the default ~/.claude.
 func ScanAll(claudeHome string) ([]Session, error) {
 	if claudeHome == "" {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return nil, err
+		// Check CLAUDE_HOME env var first — used for demo/testing with fake data.
+		// Falls back to ~/.claude if not set.
+		claudeHome = os.Getenv("CLAUDE_HOME")
+		if claudeHome == "" {
+			homeDir, err := os.UserHomeDir()
+			if err != nil {
+				return nil, err
+			}
+			claudeHome = filepath.Join(homeDir, ".claude")
 		}
-		claudeHome = filepath.Join(homeDir, ".claude")
 	}
 
 	projectsDir := filepath.Join(claudeHome, "projects")

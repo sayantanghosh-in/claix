@@ -18,8 +18,7 @@
 
 **claix** is a smart terminal UI to search, organize, and resume your [Claude Code](https://docs.anthropic.com/en/docs/claude-code) sessions across all your projects. Never lose a conversation again.
 
-<!-- TODO: Add a GIF demo here → docs/demo.gif -->
-<!-- ![claix demo](docs/demo.gif) -->
+![claix demo](docs/demo.gif)
 
 ---
 
@@ -43,7 +42,7 @@ If you use Claude Code across multiple projects, you've probably experienced thi
 | **Smart Titles** | Auto-generated titles from PRs, Claude's responses, or your first message |
 | **Fuzzy Search** | Press `/` to instantly filter sessions by title, branch, project, or tags |
 | **One-Key Resume** | Select a session, press `Enter` — claix opens Claude Code in the right directory |
-| **Tags & Notes** | Press `t` to tag, `n` to add notes. Persisted locally for you to organize sessions your way |
+| **Tags & Notes** | Press `t` to tag, `x` to untag, `n` to add notes. Persisted locally |
 | **Clickable PR Links** | PR numbers are terminal hyperlinks — click to open the GitHub PR directly |
 | **File Activity** | See which repos were touched and how many files were read/edited per session |
 | **Dashboard** | Session counts, 28-day activity sparkline, token usage by model, top projects |
@@ -52,29 +51,8 @@ If you use Claude Code across multiple projects, you've probably experienced thi
 | **Markdown Export** | `claix export <id>` generates a markdown summary with conversation highlights |
 | **Usage Stats** | `claix stats` shows detailed usage: sessions, messages, tokens, top projects |
 | **MCP Server** | Claude can tag and query your sessions mid-conversation |
+| **Custom Themes** | 6 built-in themes: default, dracula, catppuccin, nord, gruvbox, tokyonight |
 | **Cross-Platform** | Single binary for macOS, Linux, and Windows. No runtime dependencies |
-
----
-
-## Screenshots
-
-> **Add these screenshots to make the README shine. See the [Screenshots Guide](#screenshots-to-capture) section below for what to capture.**
-
-<!-- TODO: Uncomment and add real screenshots -->
-<!-- ### TUI — Main View -->
-<!-- ![Main TUI](docs/screenshots/tui-main.png) -->
-
-<!-- ### TUI — Search Mode -->
-<!-- ![Search](docs/screenshots/tui-search.png) -->
-
-<!-- ### TUI — Detail Panel with PRs -->
-<!-- ![Detail Panel](docs/screenshots/tui-detail.png) -->
-
-<!-- ### CLI — Stats Command -->
-<!-- ![Stats](docs/screenshots/cli-stats.png) -->
-
-<!-- ### CLI — Export Command -->
-<!-- ![Export](docs/screenshots/cli-export.png) -->
 
 ---
 
@@ -117,6 +95,8 @@ claix install
 
 This configures Claude Code to automatically run `claix sync` after every session. Your session index stays up to date without any manual effort.
 
+To remove hooks later: `claix uninstall`
+
 ### 2. Launch the TUI
 
 ```bash
@@ -130,6 +110,8 @@ That's it. You'll see all your Claude Code sessions with auto-generated titles, 
 - Use `↑`/`↓` to browse sessions
 - The right panel shows full details for the selected session
 - Press `Enter` to resume — claix opens Claude Code in the correct project directory
+
+![TUI Main View](docs/screenshots/tui-main.png)
 
 ---
 
@@ -154,9 +136,22 @@ The TUI has a 2-column layout:
 - Tags, notes, and conversation description
 - Scroll with `←`/`→`
 
+### Search
+
+Press `/` in the TUI to search. Type your query and results filter in real-time across titles, branches, projects, and tags. Press `Esc` to clear, `Enter` to keep the filter.
+
+![Search Mode](docs/screenshots/tui-search.png)
+
+### Tags & Notes
+
+Press `t` to tag a session, `x` to remove a tag, `n` to add a note. Tags and notes are persisted locally and visible on both the session card and the detail panel.
+
+![Tags](docs/screenshots/tui-tags.png)
+
 ### CLI Commands
 
 ```bash
+claix                            # Launch TUI (default)
 claix list                       # List all sessions as a table
 claix search "auth bug"          # Fuzzy search across titles, branches, tags
 claix resume                     # Interactive picker — choose from last 10 sessions
@@ -170,7 +165,15 @@ claix mcp-server                 # Run as MCP server (used by Claude Code)
 claix version                    # Print version
 ```
 
-### Export example
+### Stats
+
+```bash
+claix stats
+```
+
+![Stats](docs/screenshots/cli-stats.png)
+
+### Export
 
 ```bash
 # Export a session summary to clipboard
@@ -181,6 +184,8 @@ claix export c8a4f03f > session-summary.md
 ```
 
 The export includes: session metadata, auto-title, conversation highlights (first 5 exchanges), files changed, and PR links.
+
+![Export](docs/screenshots/cli-export.png)
 
 ---
 
@@ -198,19 +203,7 @@ claix theme tokyonight           # Switch to Tokyo Night
 claix theme default              # Switch back to default
 ```
 
-Each theme shows a color preview when you run `claix theme`:
-
-```
-Current theme: default
-
-Available themes:
-  ▸ default       ██ ██ ██ ██ ██
-    dracula       ██ ██ ██ ██ ██
-    catppuccin    ██ ██ ██ ██ ██
-    nord          ██ ██ ██ ██ ██
-    gruvbox       ██ ██ ██ ██ ██
-    tokyonight    ██ ██ ██ ██ ██
-```
+![Themes](docs/screenshots/cli-theme.png)
 
 Your theme choice is saved to `~/.config/claix/store.json` and applied every time you launch `claix`.
 
@@ -226,6 +219,7 @@ Your theme choice is saved to `~/.config/claix/store.json` and applied every tim
 | `Enter` | Resume selected session |
 | `/` | Search / filter sessions |
 | `t` | Add a tag to selected session |
+| `x` | Remove a tag from selected session |
 | `n` | Add a note to selected session |
 | `Esc` | Exit search / tag / note mode |
 | `q` / `Ctrl+C` | Quit |
@@ -245,7 +239,7 @@ Your theme choice is saved to `~/.config/claix/store.json` and applied every tim
         ▼
 ~/.config/claix/
   ├── index.json              ← Cached session index (from claix sync)
-  └── store.json              ← Your tags, notes, pins
+  └── store.json              ← Your tags, notes, pins, theme
         │
         ▼
    claix TUI / CLI            ← Displays everything, never modifies Claude's files
@@ -346,19 +340,28 @@ claix/
 │   ├── tui/
 │   │   ├── app.go                # Root Bubbletea model (2-column layout)
 │   │   ├── styles.go             # Lipgloss color palette and styles
+│   │   ├── themes.go             # Theme definitions and switching
 │   │   └── keys.go               # Keyboard shortcuts
 │   ├── scanner/
 │   │   ├── scanner.go            # Session file parser + metadata extraction
 │   │   └── stats.go              # Stats cache parser + sparkline renderer
 │   ├── store/
-│   │   └── store.go              # Tags, notes, pins + index cache
+│   │   └── store.go              # Tags, notes, pins, theme + index cache
 │   ├── export/
 │   │   └── export.go             # Markdown session export
 │   ├── mcp/
 │   │   └── server.go             # MCP server (JSON-RPC 2.0 over stdio)
 │   └── config/
 │       └── config.go             # Configuration management
-├── docs/                         # Documentation
+├── scripts/
+│   └── generate-demo-data.py     # Generate fake sessions for screenshots/demos
+├── docs/
+│   ├── demo.gif                  # Animated demo
+│   ├── demo.tape                 # VHS recording script (reproducible)
+│   ├── screenshots/              # README screenshots
+│   ├── ARCHITECTURE.md           # System design overview
+│   ├── CONTRIBUTING.md           # Contribution guidelines
+│   └── DEVELOPMENT.md            # Dev setup and workflows
 ├── .github/workflows/            # CI/CD (build + test on push, GoReleaser on tag)
 ├── .goreleaser.yaml              # Cross-platform release builds
 ├── Makefile                      # build, run, test, lint, clean
@@ -422,40 +425,6 @@ Contributions are welcome! Please see [CONTRIBUTING.md](docs/CONTRIBUTING.md) fo
 - [x] MCP server for in-session interaction
 - [x] Cross-platform distribution (GoReleaser + Homebrew)
 - [x] Custom themes (6 built-in: default, dracula, catppuccin, nord, gruvbox, tokyonight)
-- [ ] Multi-machine sync
-
----
-
-## Screenshots to capture
-
-> **For the maintainer**: Here are the screenshots and GIFs to add for maximum impact.
-
-### Must-have screenshots (add to `docs/screenshots/`)
-
-1. **`tui-main.png`** — Full TUI with dashboard header + session cards + detail panel visible. Select a session that has PRs and file activity.
-2. **`tui-search.png`** — TUI with `/` search active, showing filtered results.
-3. **`tui-tags.png`** — TUI showing a session with tags visible on the card and detail panel.
-4. **`cli-stats.png`** — Terminal output of `claix stats`.
-5. **`cli-export.png`** — Terminal output of `claix export <id>` (the markdown).
-6. **`cli-list.png`** — Terminal output of `claix list`.
-
-### Must-have GIF (add as `docs/demo.gif`)
-
-Record a ~30 second GIF showing:
-1. Launch `claix` → dashboard appears
-2. Navigate up/down through sessions → detail panel updates
-3. Press `/` → type a search query → results filter live
-4. Press `Esc` → clear search
-5. Press `t` → type a tag → tag appears on the card
-6. Press `Enter` → resumes into Claude Code
-
-**Tools to record**: [VHS](https://github.com/charmbracelet/vhs) (from the Charm team — same people who make Bubbletea), or [asciinema](https://asciinema.org/) + [agg](https://github.com/asciinema/agg) to convert to GIF.
-
-### Nice-to-have
-
-7. **`tui-pr-click.gif`** — Short GIF showing cmd+click on a PR link opening the browser.
-8. **`cli-resume.png`** — Terminal output of `claix resume` interactive picker.
-9. **Side-by-side before/after** — Left: `claude --resume ???` (you don't know the ID). Right: `claix` → select → Enter.
 
 ---
 

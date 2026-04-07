@@ -59,11 +59,14 @@ type statsCache struct {
 // Pass "" for claudeHome to use the default ~/.claude.
 func LoadStats(claudeHome string) (*Stats, error) {
 	if claudeHome == "" {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return nil, err
+		claudeHome = os.Getenv("CLAUDE_HOME")
+		if claudeHome == "" {
+			homeDir, err := os.UserHomeDir()
+			if err != nil {
+				return nil, err
+			}
+			claudeHome = filepath.Join(homeDir, ".claude")
 		}
-		claudeHome = filepath.Join(homeDir, ".claude")
 	}
 
 	statsPath := filepath.Join(claudeHome, "stats-cache.json")
