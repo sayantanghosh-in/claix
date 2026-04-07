@@ -7,7 +7,7 @@
  ╚═════╝ ╚══════╝ ╚═╝  ╚═╝ ╚═╝ ╚═╝  ╚═╝
 ```
 
-![Go](https://img.shields.io/badge/go-1.22+-00ADD8?style=flat-square&logo=go&logoColor=white)
+![Go](https://img.shields.io/badge/go-1.26+-00ADD8?style=flat-square&logo=go&logoColor=white)
 ![License](https://img.shields.io/github/license/sayantanghosh-in/claix?style=flat-square&color=green)
 ![Build](https://img.shields.io/github/actions/workflow/status/sayantanghosh-in/claix/ci.yml?branch=main&style=flat-square&label=build)
 ![Release](https://img.shields.io/github/v/release/sayantanghosh-in/claix?style=flat-square&color=purple)
