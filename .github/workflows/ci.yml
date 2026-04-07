@@ -22,7 +22,9 @@ jobs:
       - name: Test
         run: go test ./... -v -race
 
-      - name: Lint
-        uses: golangci/golangci-lint-action@v7
-        with:
-          version: v2.1.6
+      # Lint step disabled — golangci-lint doesn't support Go 1.26 yet
+      # Re-enable when a compatible version is released
+      # - name: Lint
+      #   uses: golangci/golangci-lint-action@v7
+      #   with:
+      #     version: latest
