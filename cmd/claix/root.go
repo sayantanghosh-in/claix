@@ -583,15 +583,16 @@ var syncCmd = &cobra.Command{
 				}
 				if newest != nil {
 					if pi.Title != "" {
-						// Title is stored in the session's .jsonl by Claude, but we can
-						// apply tags from the pending init to the store metadata.
+						meta := st.GetMeta(newest.ID)
+						meta.Title = pi.Title
+						st.SetMeta(newest.ID, meta)
 					}
 					for _, tag := range pi.Tags {
 						st.AddTag(newest.ID, tag)
 					}
 					_ = st.Save()
-					if len(pi.Tags) > 0 {
-						fmt.Printf("\n  Applied tags %v to session %s\n", pi.Tags, newest.ID[:8])
+					if pi.Title != "" || len(pi.Tags) > 0 {
+						fmt.Printf("\n  Applied init metadata to session %s\n", newest.ID[:8])
 					}
 				}
 			}

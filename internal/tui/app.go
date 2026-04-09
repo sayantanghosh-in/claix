@@ -735,8 +735,18 @@ func (m Model) renderLeftColumn(width int) []string {
 		}
 		cl = append(cl, fullLine+"  "+dimStyle.Render(lastActive))
 
-		// Line 2: title — if the session has PRs, make the PR number a clickable hyperlink
+		// Line 2: title — prefer user-defined title from claix init, with Claude's title as suffix
 		titleText := s.Title
+		if m.store != nil {
+			meta := m.store.GetMeta(s.ID)
+			if meta.Title != "" {
+				if titleText != "" {
+					titleText = meta.Title + " (Claude: " + titleText + ")"
+				} else {
+					titleText = meta.Title
+				}
+			}
+		}
 		maxW := width - 12
 		if maxW < 20 { maxW = 20 }
 		if len(titleText) > maxW { titleText = titleText[:maxW] + "..." }
@@ -1067,6 +1077,22 @@ func (m Model) renderRightColumn(width int) []string {
 			wrapped := wordWrap(meta.Notes, wrapWidth)
 			for _, wl := range wrapped {
 				lines = append(lines, "  "+normalItemStyle.Render(wl))
+			}
+		}
+	}
+
+	// ── User Title (from claix init) ──
+	if m.store != nil {
+		meta := m.store.GetMeta(s.ID)
+		if meta.Title != "" {
+			lines = append(lines, "")
+			lines = append(lines, dimStyle.Render("  "+strings.Repeat("─", width-4)))
+			lines = append(lines, "")
+			lines = append(lines, panelHeaderStyle.Render("  Title"))
+			lines = append(lines, "")
+			wrapped := wordWrap(meta.Title, wrapWidth)
+			for _, wl := range wrapped {
+				lines = append(lines, "  "+accentStyle.Render(wl))
 			}
 		}
 	}

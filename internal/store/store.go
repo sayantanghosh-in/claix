@@ -41,6 +41,7 @@ type SessionMeta struct {
 	Tags   []string `json:"tags,omitempty"`   // User-defined labels (e.g., "bugfix", "wip")
 	Notes  string   `json:"notes,omitempty"`  // Free-form notes about the session
 	Pinned bool     `json:"pinned,omitempty"` // Pinned sessions always appear at the top
+	Title  string   `json:"title,omitempty"`  // User-defined title (from claix init)
 }
 
 // Store is the top-level structure persisted to store.json.
@@ -274,6 +275,11 @@ func (s *Store) TogglePin(sessionID string) {
 // which for SessionMeta is {Tags: nil, Notes: "", Pinned: false}.
 func (s *Store) GetMeta(sessionID string) SessionMeta {
 	return s.Sessions[sessionID]
+}
+
+// SetMeta replaces the full metadata for a session.
+func (s *Store) SetMeta(sessionID string, meta SessionMeta) {
+	s.Sessions[sessionID] = meta
 }
 
 // =====================================================================
