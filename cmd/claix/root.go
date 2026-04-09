@@ -1145,7 +1145,7 @@ func installHooks() {
 
 	if !startInstalled {
 		sessionStartEntry := map[string]interface{}{
-			"matcher": "startup",
+			"matcher": "",
 			"hooks": []interface{}{
 				map[string]interface{}{
 					"type":    "command",
