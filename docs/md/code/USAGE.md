@@ -23,7 +23,7 @@ A comprehensive guide to using claix — the terminal UI for managing Claude Cod
 ## Interactive TUI
 
 ```bash
-claix                            # Launch the full TUI
+claix
 ```
 
 The TUI has a 2-column layout:
@@ -55,8 +55,6 @@ Press `/` in the TUI to search. Type your query and results filter in real-time 
 
 Press `t` to tag a session, `x` to remove a tag, `n` to add a note. Tags and notes are persisted locally and visible on both the session card and the detail panel.
 
-![Empty State](../../images/screenshots/tui-empty.png)
-
 ---
 
 ## Session Init
@@ -80,7 +78,7 @@ When the session ends and `claix sync` runs, the tags are applied to the newest 
 ## CLI Commands
 
 ```bash
-claix                            # Launch TUI (default)
+claix
 claix list                       # List all sessions as a table
 claix search "auth bug"          # Fuzzy search across titles, branches, tags
 claix resume                     # Interactive picker — choose from last 10 sessions
