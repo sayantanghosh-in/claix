@@ -39,7 +39,7 @@ The TUI has a 2-column layout:
 - Tags, notes, and conversation description
 - Scroll with `←`/`→`
 
-![TUI Main View](screenshots/tui-main.png)
+![TUI Main View](../../images/screenshots/tui-main.png)
 
 ---
 
@@ -47,7 +47,7 @@ The TUI has a 2-column layout:
 
 Press `/` in the TUI to search. Type your query and results filter in real-time across titles, branches, projects, and tags. Press `Esc` to clear, `Enter` to keep the filter.
 
-![Search Mode](screenshots/tui-search.png)
+![Search Mode](../../images/screenshots/tui-search.png)
 
 ---
 
@@ -105,7 +105,7 @@ claix stats
 
 Shows detailed usage statistics including session counts, message totals, token usage, and top projects.
 
-![Stats](screenshots/cli-stats.png)
+![Stats](../../images/screenshots/cli-stats.png)
 
 ---
 
@@ -121,7 +121,7 @@ claix export c8a4f03f > session-summary.md
 
 The export includes: session metadata, auto-title, conversation highlights (first 5 exchanges), files changed, and PR links.
 
-![Export](screenshots/cli-export.png)
+![Export](../../images/screenshots/cli-export.png)
 
 ---
 
@@ -139,7 +139,7 @@ claix theme tokyonight           # Switch to Tokyo Night
 claix theme default              # Switch back to default
 ```
 
-![Themes](screenshots/cli-theme.png)
+![Themes](../../images/screenshots/cli-theme.png)
 
 Your theme choice is saved to `~/.config/claix/store.json` and applied every time you launch `claix`.
 
