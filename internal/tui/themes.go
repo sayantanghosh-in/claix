@@ -41,6 +41,7 @@ type ThemeColors struct {
 	Dim       string // Very subtle text, borders
 	PR        string // PR links, tags (needs to pop)
 	Sparkline string // Activity sparkline bars
+	Star      string // Star nudge banner color
 }
 
 // Themes is the registry of all available themes.
@@ -49,68 +50,74 @@ var Themes = map[string]ThemeColors{
 	"default": {
 		Primary:   "#7C3AED", // Purple
 		Secondary: "#06B6D4", // Cyan
-		Muted:     "#6B7280", // Gray
+		Muted:     "#9CA3AF", // Gray (brightened for dark terminals)
 		Success:   "#10B981", // Green
 		Warning:   "#F59E0B", // Amber
 		Text:      "#E5E7EB", // Light gray
-		Dim:       "#4B5563", // Dark gray
+		Dim:       "#6B7280", // Dark gray (brightened from #4B5563)
 		PR:        "#EC4899", // Pink
 		Sparkline: "#818CF8", // Indigo
+		Star:      "#FBBF24", // Gold
 	},
 	"dracula": {
 		Primary:   "#BD93F9", // Purple
 		Secondary: "#8BE9FD", // Cyan
-		Muted:     "#6272A4", // Comment gray
+		Muted:     "#8591C2", // Comment (brightened)
 		Success:   "#50FA7B", // Green
 		Warning:   "#FFB86C", // Orange
 		Text:      "#F8F8F2", // Foreground
-		Dim:       "#44475A", // Current line
+		Dim:       "#6272A4", // Current line (brightened)
 		PR:        "#FF79C6", // Pink
 		Sparkline: "#BD93F9", // Purple
+		Star:      "#F1FA8C", // Yellow
 	},
 	"catppuccin": {
 		Primary:   "#CBA6F7", // Mauve
 		Secondary: "#89DCEB", // Sky
-		Muted:     "#6C7086", // Overlay0
+		Muted:     "#9399B2", // Overlay2 (brightened)
 		Success:   "#A6E3A1", // Green
 		Warning:   "#F9E2AF", // Yellow
 		Text:      "#CDD6F4", // Text
-		Dim:       "#45475A", // Surface0
+		Dim:       "#6C7086", // Overlay0 (brightened)
 		PR:        "#F5C2E7", // Pink
 		Sparkline: "#B4BEFE", // Lavender
+		Star:      "#F9E2AF", // Yellow
 	},
 	"nord": {
 		Primary:   "#5E81AC", // Nord10
 		Secondary: "#88C0D0", // Nord8
-		Muted:     "#4C566A", // Nord3
+		Muted:     "#7B88A1", // Brightened
 		Success:   "#A3BE8C", // Nord14
 		Warning:   "#EBCB8B", // Nord13
 		Text:      "#ECEFF4", // Nord6
-		Dim:       "#434C5E", // Nord2
+		Dim:       "#4C566A", // Nord3 (brightened)
 		PR:        "#B48EAD", // Nord15
 		Sparkline: "#81A1C1", // Nord9
+		Star:      "#EBCB8B", // Nord13
 	},
 	"gruvbox": {
 		Primary:   "#D3869B", // Purple
 		Secondary: "#83A598", // Aqua
-		Muted:     "#928374", // Gray
+		Muted:     "#A89984", // fg4 (brightened)
 		Success:   "#B8BB26", // Green
 		Warning:   "#FABD2F", // Yellow
 		Text:      "#EBDBB2", // Light
-		Dim:       "#504945", // Dark
+		Dim:       "#928374", // Gray (brightened)
 		PR:        "#FB4934", // Red
 		Sparkline: "#D3869B", // Purple
+		Star:      "#FABD2F", // Yellow
 	},
 	"tokyonight": {
 		Primary:   "#7AA2F7", // Blue
 		Secondary: "#7DCFFF", // Cyan
-		Muted:     "#565F89", // Comment
+		Muted:     "#737AA2", // Comment (brightened)
 		Success:   "#9ECE6A", // Green
 		Warning:   "#E0AF68", // Yellow
 		Text:      "#C0CAF5", // Foreground
-		Dim:       "#3B4261", // Dark
+		Dim:       "#565F89", // Dark (brightened)
 		PR:        "#FF007C", // Magenta
 		Sparkline: "#BB9AF7", // Purple
+		Star:      "#E0AF68", // Yellow
 	},
 }
 
@@ -143,6 +150,7 @@ func ApplyTheme(name string) {
 	colorDim = lipgloss.Color(theme.Dim)
 	colorPR = lipgloss.Color(theme.PR)
 	colorSparkline = lipgloss.Color(theme.Sparkline)
+	colorStar = lipgloss.Color(theme.Star)
 
 	// Rebuild all styles with the new colors.
 	// In Go, lipgloss styles are values (not references), so we need to
@@ -233,4 +241,8 @@ func rebuildStyles() {
 
 	inputBarStyle = lipgloss.NewStyle().
 		Foreground(colorText)
+
+	starBannerStyle = lipgloss.NewStyle().
+		Foreground(colorStar).
+		Bold(true)
 }

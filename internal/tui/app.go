@@ -13,6 +13,7 @@ import (
 
 	"github.com/sayantanghosh-in/claix/internal/scanner"
 	"github.com/sayantanghosh-in/claix/internal/store"
+	"github.com/sayantanghosh-in/claix/internal/util"
 )
 
 // =====================================================================
@@ -57,6 +58,9 @@ type Model struct {
 
 	// Store — claix's own metadata (tags, notes, pins), loaded once at startup
 	store *store.Store
+
+	// Star nudge — shown periodically to encourage GitHub stars
+	showStarNudge bool
 }
 
 // dataLoadedMsg is sent when session scan + stats load complete.
@@ -123,6 +127,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.allSessions = msg.sessions
 		m.stats = msg.stats
 		m.store = msg.store
+
+		// Check if we should show the star nudge banner
+		if m.store != nil {
+			m.showStarNudge = m.store.ShouldShowStarNudge()
+		}
 
 		// Filter out empty sessions for the default view
 		var filtered []scanner.Session
@@ -319,6 +328,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.quitting = true
 				return m, tea.Quit
 			}
+		case "s":
+			// Star nudge: open GitHub repo in browser and hide permanently
+			if m.showStarNudge && m.store != nil {
+				_ = util.OpenBrowser(util.RepoURL)
+				m.store.MarkStarred()
+				_ = m.store.Save()
+				m.showStarNudge = false
+			}
+		case "d":
+			// Star nudge: dismiss for 10 days
+			if m.showStarNudge && m.store != nil {
+				m.store.DismissStarNudge()
+				_ = m.store.Save()
+				m.showStarNudge = false
+			}
 		}
 	}
 
@@ -395,22 +419,22 @@ func (m Model) View() string {
 		return ""
 	}
 
-	// Calculate column widths: 4:1 ratio
-	// Right panel gets 1/5 of width, left gets the rest
-	rightWidth := m.width / 5
-	if rightWidth < 25 {
-		rightWidth = 25
+	// ── Empty state: show a centered landing screen ──
+	if m.loaded && len(m.allSessions) == 0 {
+		return m.renderEmptyState()
 	}
-	if rightWidth > 40 {
-		rightWidth = 40
-	}
-	leftWidth := m.width - rightWidth - 3 // -3 for the vertical divider + padding
+
+	// Calculate column widths: 3:1 ratio
+	rightWidth := m.width / 4
+	if rightWidth < 28 { rightWidth = 28 }
+	if rightWidth > 50 { rightWidth = 50 }
+	leftWidth := m.width - rightWidth - 3
 
 	// Build left and right columns separately, then merge line by line
 	leftLines := m.renderLeftColumn(leftWidth)
 	allRightLines := m.renderRightColumn(rightWidth)
 
-	// Apply scroll offset to right panel. Clamp so we don't scroll past the end.
+	// Apply scroll offset to right panel
 	maxScroll := len(allRightLines) - m.height + 2
 	if maxScroll < 0 { maxScroll = 0 }
 	if m.panelScroll > maxScroll { m.panelScroll = maxScroll }
@@ -419,34 +443,28 @@ func (m Model) View() string {
 		rightLines = allRightLines[m.panelScroll:]
 	}
 
-	// Merge left and right columns line by line.
-	// Each left line is padded to exactly leftWidth so the divider aligns perfectly.
 	var b strings.Builder
 
-	// Use terminal height as the line count — fill the full screen
-	totalLines := m.height
-	if totalLines < 1 { totalLines = len(leftLines) }
+	// Only render divider for lines where at least one column has content.
+	// This prevents the divider from trailing into empty space below the content.
+	contentLines := len(leftLines)
+	if len(rightLines) > contentLines { contentLines = len(rightLines) }
+
+	// Reserve last 2 lines for the footer (rendered separately, full width, no divider)
+	maxContentLines := m.height - 2
+	if maxContentLines < contentLines { contentLines = maxContentLines }
 
 	divider := dimStyle.Render("│")
 
-	for i := 0; i < totalLines; i++ {
+	for i := 0; i < contentLines; i++ {
 		left := ""
-		if i < len(leftLines) {
-			left = leftLines[i]
-		}
+		if i < len(leftLines) { left = leftLines[i] }
 		right := ""
-		if i < len(rightLines) {
-			right = rightLines[i]
-		}
+		if i < len(rightLines) { right = rightLines[i] }
 
-		// Use lipgloss.Width for accurate visual width calculation.
-		// This correctly handles ANSI codes, Unicode, and multi-byte chars.
 		vw := lipgloss.Width(left)
 		pad := leftWidth - vw
-		if pad < 0 {
-			// Left line is too wide — truncate it (shouldn't happen, but safety)
-			pad = 0
-		}
+		if pad < 0 { pad = 0 }
 
 		b.WriteString(left)
 		b.WriteString(strings.Repeat(" ", pad))
@@ -454,6 +472,18 @@ func (m Model) View() string {
 		b.WriteString(right)
 		b.WriteString("\n")
 	}
+
+	// ── Footer: rendered full-width, no divider ──
+	b.WriteString(fmt.Sprintf("  %s %s  %s %s  %s %s  %s %s  %s %s  %s %s  %s %s  %s %s\n",
+		helpKeyStyle.Render("↑↓"), helpDescStyle.Render("navigate"),
+		helpKeyStyle.Render("←→"), helpDescStyle.Render("scroll"),
+		helpKeyStyle.Render("/"), helpDescStyle.Render("search"),
+		helpKeyStyle.Render("t"), helpDescStyle.Render("tag"),
+		helpKeyStyle.Render("x"), helpDescStyle.Render("untag"),
+		helpKeyStyle.Render("n"), helpDescStyle.Render("note"),
+		helpKeyStyle.Render("enter"), helpDescStyle.Render("resume"),
+		helpKeyStyle.Render("q"), helpDescStyle.Render("quit"),
+	))
 
 	// ── Bottom bar: show search/tag/note input when active ──
 	if m.searching {
@@ -486,13 +516,49 @@ func (m Model) View() string {
 // LEFT COLUMN — Header + Session Cards
 // =====================================================================
 
+// renderEmptyState shows a centered landing page when no sessions exist.
+// Used for fresh installs or when running on a machine without Claude Code sessions.
+func (m Model) renderEmptyState() string {
+	logo := `
+ ██████╗ ██╗       █████╗  ██╗ ██╗  ██╗
+██╔════╝ ██║      ██╔══██╗ ██║  ██╗██╔╝
+██║      ██║      ███████║ ██║   ████╔╝
+██║      ██║      ██╔══██║ ██║  ██╔╝██╗
+╚██████╗ ███████╗ ██║  ██║ ██║ ██╔╝  ██╗
+ ╚═════╝ ╚══════╝ ╚═╝  ╚═╝ ╚═╝ ╚═╝  ╚═╝`
+
+	githubLink := makeHyperlink(util.RepoURL, accentStyle.Render("github.com/sayantanghosh-in/claix"))
+	websiteLink := makeHyperlink("https://sayantanghosh.in", accentStyle.Render("sayantanghosh.in"))
+
+	divider := dimStyle.Render("─────────────────────────────────────────")
+
+	content := accentStyle.Render(logo) + "\n\n" +
+		taglineStyle.Render("make your Claude sessions click") + "\n\n" +
+		divider + "\n\n" +
+		normalItemStyle.Render("No Claude Code sessions found yet.") + "\n\n" +
+		dimStyle.Render("Quick Start:") + "\n" +
+		normalItemStyle.Render("  1. Run ") + accentStyle.Render("claude") + normalItemStyle.Render(" to create your first session") + "\n" +
+		normalItemStyle.Render("  2. Run ") + accentStyle.Render("claix") + normalItemStyle.Render(" to browse your sessions") + "\n\n" +
+		divider + "\n\n" +
+		dimStyle.Render("Author:  ") + normalItemStyle.Render("Sayantan Ghosh") + "\n" +
+		dimStyle.Render("GitHub:  ") + githubLink + "\n" +
+		dimStyle.Render("Website: ") + websiteLink + "\n\n" +
+		dimStyle.Render("Press q to quit")
+
+	// Center the content on screen using lipgloss.Place
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content)
+}
+
 func (m Model) renderLeftColumn(width int) []string {
 	var lines []string
 
-	// ── Title ──
-	title := titleStyle.Render(" CLAIX ")
-	tagline := taglineStyle.Render(" make your Claude sessions click")
-	lines = append(lines, title+tagline)
+	// ── Header: compact ASCII art + links ──
+	logoLine1 := accentStyle.Render("█▀▀ █   ▄▀▄ █ ▀▄▀")
+	logoLine2 := accentStyle.Render("█▄▄ █▄▄ █▀█ █ █ █")
+	githubLink := makeHyperlink(util.RepoURL, dimStyle.Render("github.com/sayantanghosh-in/claix"))
+	websiteLink := makeHyperlink("https://sayantanghosh.in", dimStyle.Render("sayantanghosh.in"))
+	lines = append(lines, " "+logoLine1+"   "+githubLink)
+	lines = append(lines, " "+logoLine2+"   "+websiteLink)
 
 	if !m.loaded {
 		lines = append(lines, "")
@@ -504,6 +570,14 @@ func (m Model) renderLeftColumn(width int) []string {
 		lines = append(lines, "")
 		lines = append(lines, emptyStyle.Render("No Claude Code sessions found."))
 		return lines
+	}
+
+	// Star nudge banner (shown periodically)
+	if m.showStarNudge {
+		lines = append(lines, starBannerStyle.Render(
+			"  ⭐ Enjoying claix? Star us on GitHub!  ") +
+			helpKeyStyle.Render("s") + helpDescStyle.Render(" star  ") +
+			helpKeyStyle.Render("d") + helpDescStyle.Render(" dismiss"))
 	}
 
 	lines = append(lines, "") // Spacing
@@ -599,24 +673,15 @@ func (m Model) renderLeftColumn(width int) []string {
 	lines = append(lines, "  "+dimStyle.Render(strings.Repeat("─", sepWidth)))
 	lines = append(lines, "")
 
-	// ── Session cards ──
-	// Each card = 3 lines + 1 blank = 4 lines
-	headerLineCount := len(lines)
-	footerLines := 3
-	availableLines := m.height - headerLineCount - footerLines
-	linesPerCard := 4
-	visibleCards := availableLines / linesPerCard
-	if visibleCards < 2 { visibleCards = 2 }
-
-	start := 0
-	if m.cursor >= visibleCards {
-		start = m.cursor - visibleCards + 1
+	// ── Session cards (dynamic height) ──
+	// Pre-compute all card line groups so we can paginate by cumulative line count.
+	// Each card has 3 base lines + optional tag lines + 1 blank separator.
+	type cardLines struct {
+		lines []string
 	}
-	end := start + visibleCards
-	if end > len(m.sessions) { end = len(m.sessions) }
 
-	for i := start; i < end; i++ {
-		s := m.sessions[i]
+	allCards := make([]cardLines, len(m.sessions))
+	for i, s := range m.sessions {
 		isSelected := i == m.cursor
 
 		border := dimStyle.Render("│")
@@ -635,13 +700,10 @@ func (m Model) renderLeftColumn(width int) []string {
 		project := shortenPath(s.ProjectPath)
 		if len(project) > 20 { project = project[:20] + ".." }
 
-		branch := s.GitBranch
-		if branch == "" || branch == "HEAD" {
-			branch = ""
-		} else {
-			if len(branch) > 18 { branch = branch[:18] + ".." }
-			branch = "  " + branchStyle.Render(branch)
-		}
+		// Truncate branch for display
+		branchTrunc := s.GitBranch
+		if branchTrunc == "HEAD" { branchTrunc = "" }
+		if len(branchTrunc) > 18 { branchTrunc = branchTrunc[:18] + ".." }
 
 		// Date + time
 		lastActive := s.LastActive
@@ -649,21 +711,16 @@ func (m Model) renderLeftColumn(width int) []string {
 			lastActive = strings.Replace(lastActive[:16], "T", " ", 1)
 		}
 
-		// Line 1: status + id + project + branch ... datetime
-		// Build the full styled line, then use lipgloss.Width() to calculate
-		// the exact padding needed to right-align the datetime.
+		var cl []string
 
-		// Truncate branch for display
-		branchTrunc := s.GitBranch
-		if len(branchTrunc) > 18 { branchTrunc = branchTrunc[:18] + ".." }
-
+		// Line 1: status + id + project + branch + datetime (inline)
 		var fullLine string
 		if isSelected {
 			styledContent := fmt.Sprintf("%s %s  %s%s",
 				statusIcon,
 				accentStyle.Render(shortID),
 				selectedItemStyle.Render(project),
-				func() string { if branch != "" { return "  " + branchStyle.Render(branchTrunc) }; return "" }(),
+				func() string { if branchTrunc != "" { return "  " + branchStyle.Render(branchTrunc) }; return "" }(),
 			)
 			fullLine = fmt.Sprintf(" %s %s %s",
 				selectedCursor.Render("▸"), border, styledContent)
@@ -672,18 +729,11 @@ func (m Model) renderLeftColumn(width int) []string {
 				statusIcon,
 				dimStyle.Render(shortID),
 				project,
-				func() string { if branch != "" { return "  " + branchStyle.Render(branchTrunc) }; return "" }(),
+				func() string { if branchTrunc != "" { return "  " + branchStyle.Render(branchTrunc) }; return "" }(),
 			)
 			fullLine = fmt.Sprintf("   %s %s", border, styledContent)
 		}
-
-		// Right-align datetime: total line width should equal `width`
-		styledTime := dimStyle.Render(lastActive)
-		usedWidth := lipgloss.Width(fullLine) + lipgloss.Width(styledTime)
-		pad := width - usedWidth
-		if pad < 2 { pad = 2 }
-
-		lines = append(lines, fullLine + strings.Repeat(" ", pad) + styledTime)
+		cl = append(cl, fullLine+"  "+dimStyle.Render(lastActive))
 
 		// Line 2: title — if the session has PRs, make the PR number a clickable hyperlink
 		titleText := s.Title
@@ -691,7 +741,6 @@ func (m Model) renderLeftColumn(width int) []string {
 		if maxW < 20 { maxW = 20 }
 		if len(titleText) > maxW { titleText = titleText[:maxW] + "..." }
 
-		// If this session has PRs, replace "PR #N" in the title with a clickable OSC 8 hyperlink
 		titleRendered := titleText
 		if len(s.PRLinks) > 0 {
 			pr := s.PRLinks[0]
@@ -705,7 +754,6 @@ func (m Model) renderLeftColumn(width int) []string {
 			} else {
 				titleRendered = makeHyperlink(url, prStyle.Render(prLabel))
 			}
-			// Extract repo name and append after the hyperlink
 			repoName := pr.Repository
 			if idx := strings.LastIndex(repoName, "/"); idx >= 0 {
 				repoName = repoName[idx+1:]
@@ -723,12 +771,12 @@ func (m Model) renderLeftColumn(width int) []string {
 		}
 
 		if isSelected {
-			lines = append(lines, fmt.Sprintf("     %s   %s", border, titleRendered))
+			cl = append(cl, fmt.Sprintf("     %s   %s", border, titleRendered))
 		} else {
-			lines = append(lines, fmt.Sprintf("   %s   %s", border, titleRendered))
+			cl = append(cl, fmt.Sprintf("   %s   %s", border, titleRendered))
 		}
 
-		// Line 3: file activity + tags (compact)
+		// Line 3: file activity (no tags — tags go on their own line)
 		var actParts []string
 		readCount := len(s.Activity.FilesRead)
 		editCount := len(s.Activity.FilesEdited)
@@ -740,43 +788,82 @@ func (m Model) renderLeftColumn(width int) []string {
 			if len(summary) > 35 { summary = summary[:35] + "..." }
 			actParts = append(actParts, summary)
 		}
-		// Show tags from the store on the card (if any)
+		actLine := strings.Join(actParts, "  │  ")
+		if actLine != "" {
+			cl = append(cl, fmt.Sprintf("   %s   %s", border, dimStyle.Render(actLine)))
+		} else {
+			cl = append(cl, fmt.Sprintf("   %s", border))
+		}
+
+		// Line 4+: tags on separate line(s) with word wrapping
 		if m.store != nil {
 			meta := m.store.GetMeta(s.ID)
 			if len(meta.Tags) > 0 {
 				var tagStrs []string
 				for _, tag := range meta.Tags {
-					tagStrs = append(tagStrs, tagStyle.Render("#"+tag))
+					tagStrs = append(tagStrs, "#"+tag)
 				}
-				actParts = append(actParts, strings.Join(tagStrs, " "))
+				tagText := strings.Join(tagStrs, "  ")
+				tagWidth := width - 10
+				if tagWidth < 20 { tagWidth = 20 }
+				wrapped := wordWrap(tagText, tagWidth)
+				for _, wl := range wrapped {
+					cl = append(cl, fmt.Sprintf("   %s   %s", border, tagStyle.Render(wl)))
+				}
 			}
 		}
-		actLine := strings.Join(actParts, "  │  ")
-		if actLine != "" {
-			lines = append(lines, fmt.Sprintf("   %s   %s", border, dimStyle.Render(actLine)))
-		} else {
-			lines = append(lines, fmt.Sprintf("   %s", border))
-		}
 
-		// Blank line between cards
+		allCards[i] = cardLines{lines: cl}
+	}
+
+	// Paginate by cumulative line count (dynamic card heights)
+	headerLineCount := len(lines)
+	footerLines := 3
+	availableLines := m.height - headerLineCount - footerLines
+
+	// Find the start card: scroll so the cursor card is visible
+	start := 0
+	// First, try to show as many cards as fit, with cursor visible
+	for {
+		totalLines := 0
+		cursorVisible := false
+		for j := start; j < len(m.sessions); j++ {
+			cardH := len(allCards[j].lines) + 1 // +1 for blank separator
+			if totalLines+cardH > availableLines && j > start {
+				break
+			}
+			totalLines += cardH
+			if j == m.cursor { cursorVisible = true }
+		}
+		if cursorVisible || start >= m.cursor {
+			break
+		}
+		start++
+	}
+
+	// Render visible cards
+	end := start
+	totalUsed := 0
+	for j := start; j < len(m.sessions); j++ {
+		cardH := len(allCards[j].lines) + 1
+		if totalUsed+cardH > availableLines && j > start {
+			break
+		}
+		totalUsed += cardH
+		end = j + 1
+	}
+
+	for i := start; i < end; i++ {
+		lines = append(lines, allCards[i].lines...)
 		if i < end-1 { lines = append(lines, "") }
 	}
 
-	// ── Footer ──
-	lines = append(lines, "")
+	// Scroll info (part of left column content, above the footer)
+	visibleCards := end - start
 	if len(m.sessions) > visibleCards {
+		lines = append(lines, "")
 		lines = append(lines, dimStyle.Render(fmt.Sprintf("  %d-%d of %d sessions (empty hidden)", start+1, end, len(m.sessions))))
 	}
-	lines = append(lines, fmt.Sprintf("  %s %s  %s %s  %s %s  %s %s  %s %s  %s %s  %s %s  %s %s",
-		helpKeyStyle.Render("↑↓"), helpDescStyle.Render("navigate"),
-		helpKeyStyle.Render("←→"), helpDescStyle.Render("scroll"),
-		helpKeyStyle.Render("/"), helpDescStyle.Render("search"),
-		helpKeyStyle.Render("t"), helpDescStyle.Render("tag"),
-		helpKeyStyle.Render("x"), helpDescStyle.Render("untag"),
-		helpKeyStyle.Render("n"), helpDescStyle.Render("note"),
-		helpKeyStyle.Render("enter"), helpDescStyle.Render("resume"),
-		helpKeyStyle.Render("q"), helpDescStyle.Render("quit"),
-	))
 
 	return lines
 }
@@ -800,17 +887,45 @@ func (m Model) renderRightColumn(width int) []string {
 
 	s := m.sessions[m.cursor]
 
+	// Wrap width for text content in the panel
+	wrapWidth := width - 4
+	if wrapWidth < 15 { wrapWidth = 15 }
+
 	// ── Session ID ──
 	shortID := s.ID
 	if len(shortID) > 8 { shortID = shortID[:8] }
 	lines = append(lines, fmt.Sprintf("  %s %s", dimStyle.Render("ID:"), accentStyle.Render(shortID)))
 
-	// ── Project ──
-	lines = append(lines, fmt.Sprintf("  %s %s", dimStyle.Render("Project:"), shortenPath(s.ProjectPath)))
+	// ── Project (word wrap long paths) ──
+	projectPath := shortenPath(s.ProjectPath)
+	if len(projectPath) > wrapWidth-10 {
+		wrapped := wordWrap(projectPath, wrapWidth-10)
+		for i, wl := range wrapped {
+			if i == 0 {
+				lines = append(lines, fmt.Sprintf("  %s %s", dimStyle.Render("Project:"), wl))
+			} else {
+				lines = append(lines, fmt.Sprintf("           %s", wl))
+			}
+		}
+	} else {
+		lines = append(lines, fmt.Sprintf("  %s %s", dimStyle.Render("Project:"), projectPath))
+	}
 
-	// ── Branch ──
+	// ── Branch (word wrap long branch names) ──
 	if s.GitBranch != "" && s.GitBranch != "HEAD" {
-		lines = append(lines, fmt.Sprintf("  %s %s", dimStyle.Render("Branch:"), branchStyle.Render(s.GitBranch)))
+		branchName := s.GitBranch
+		if len(branchName) > wrapWidth-9 {
+			wrapped := wordWrap(branchName, wrapWidth-9)
+			for i, wl := range wrapped {
+				if i == 0 {
+					lines = append(lines, fmt.Sprintf("  %s %s", dimStyle.Render("Branch:"), branchStyle.Render(wl)))
+				} else {
+					lines = append(lines, fmt.Sprintf("          %s", branchStyle.Render(wl)))
+				}
+			}
+		} else {
+			lines = append(lines, fmt.Sprintf("  %s %s", dimStyle.Render("Branch:"), branchStyle.Render(branchName)))
+		}
 	}
 
 	// ── Status ──
@@ -835,19 +950,26 @@ func (m Model) renderRightColumn(width int) []string {
 	lines = append(lines, fmt.Sprintf("  %s %d (%d you, %d Claude)",
 		dimStyle.Render("Msgs:"), s.TotalMsgs, s.UserMsgs, s.AssistantMsgs))
 
-	// ── Slug (Claude's fun session name) ──
+	// ── Slug (word wrap if long) ──
 	if s.Slug != "" {
-		lines = append(lines, fmt.Sprintf("  %s %s", dimStyle.Render("Slug:"), s.Slug))
+		if len(s.Slug) > wrapWidth-7 {
+			wrapped := wordWrap(s.Slug, wrapWidth-7)
+			for i, wl := range wrapped {
+				if i == 0 {
+					lines = append(lines, fmt.Sprintf("  %s %s", dimStyle.Render("Slug:"), wl))
+				} else {
+					lines = append(lines, fmt.Sprintf("         %s", wl))
+				}
+			}
+		} else {
+			lines = append(lines, fmt.Sprintf("  %s %s", dimStyle.Render("Slug:"), s.Slug))
+		}
 	}
 
 	// ── Version ──
 	if s.Version != "" {
 		lines = append(lines, fmt.Sprintf("  %s %s", dimStyle.Render("CLI:"), s.Version))
 	}
-
-	// Wrap width for text content in the panel
-	wrapWidth := width - 4
-	if wrapWidth < 15 { wrapWidth = 15 }
 
 	// ── PR Links (show early — most actionable info) ──
 	if len(s.PRLinks) > 0 {
@@ -907,7 +1029,14 @@ func (m Model) renderRightColumn(width int) []string {
 			lines = append(lines, dimStyle.Render("  Repos touched:"))
 			repos := strings.Split(s.Activity.RepoSummary, ", ")
 			for _, repo := range repos {
-				lines = append(lines, "   "+normalItemStyle.Render(repo))
+				if len(repo) > wrapWidth-3 {
+					wrapped := wordWrap(repo, wrapWidth-3)
+					for _, wl := range wrapped {
+						lines = append(lines, "   "+normalItemStyle.Render(wl))
+					}
+				} else {
+					lines = append(lines, "   "+normalItemStyle.Render(repo))
+				}
 			}
 		}
 	}
@@ -1027,10 +1156,9 @@ func visualWidth(s string) int {
 // For long words with no spaces (like URLs), it hard-breaks at `width`.
 // makeHyperlink creates an OSC 8 terminal hyperlink.
 // The text is rendered as a clickable label — clicking opens the URL in a browser.
-// Format: \033]8;;URL\033\\LABEL\033]8;;\033\\
-// Supported by: iTerm2, Warp, Ghostty, VS Code terminal, Kitty, WezTerm.
+// makeHyperlink creates a clickable terminal hyperlink using OSC 8 escape sequence.
 func makeHyperlink(url, label string) string {
-	return fmt.Sprintf("\033]8;;%s\033\\%s\033]8;;\033\\", url, label)
+	return util.MakeHyperlink(url, label)
 }
 
 func wordWrap(text string, width int) []string {

@@ -48,8 +48,21 @@ type SessionMeta struct {
 //
 // In Go, map[string]SessionMeta is like Record<string, SessionMeta> in TypeScript.
 type Store struct {
-	Sessions map[string]SessionMeta `json:"sessions"`
-	Theme    string                 `json:"theme,omitempty"` // Active theme name (e.g., "dracula", "nord")
+	Sessions       map[string]SessionMeta `json:"sessions"`
+	Theme          string                 `json:"theme,omitempty"`           // Active theme name
+	FirstOpened    string                 `json:"first_opened,omitempty"`    // ISO timestamp of first claix launch
+	LastStarPrompt string                 `json:"last_star_prompt,omitempty"` // ISO timestamp of last star nudge shown
+	StarDismissed  bool                   `json:"star_dismissed,omitempty"`  // True = never show star nudge again
+	PendingInit    *PendingInit           `json:"pending_init,omitempty"`    // Metadata set by `claix init` before launching claude
+}
+
+// PendingInit holds metadata set by `claix init` that gets applied to
+// the next session created in the same working directory.
+type PendingInit struct {
+	Title     string   `json:"title,omitempty"`
+	Tags      []string `json:"tags,omitempty"`
+	CreatedAt string   `json:"created_at"`
+	Cwd       string   `json:"cwd"`
 }
 
 // IndexCache holds the results of a `claix sync` — a snapshot of all sessions
@@ -261,6 +274,90 @@ func (s *Store) TogglePin(sessionID string) {
 // which for SessionMeta is {Tags: nil, Notes: "", Pinned: false}.
 func (s *Store) GetMeta(sessionID string) SessionMeta {
 	return s.Sessions[sessionID]
+}
+
+// =====================================================================
+// STAR NUDGE
+// =====================================================================
+
+// ShouldShowStarNudge determines whether to show the "Star us on GitHub" banner.
+// Returns true if: more than 10 days since first open AND more than 10 days since
+// last prompt AND the user hasn't permanently dismissed it.
+func (s *Store) ShouldShowStarNudge() bool {
+	if s.StarDismissed {
+		return false
+	}
+
+	now := time.Now().UTC()
+
+	// First time ever — record it and don't show yet
+	if s.FirstOpened == "" {
+		s.FirstOpened = now.Format(time.RFC3339)
+		_ = s.Save()
+		return false
+	}
+
+	firstOpened, err := time.Parse(time.RFC3339, s.FirstOpened)
+	if err != nil {
+		return false
+	}
+
+	// Less than 10 days since first open — too early
+	if now.Sub(firstOpened) < 10*24*time.Hour {
+		return false
+	}
+
+	// Check if we prompted recently
+	if s.LastStarPrompt != "" {
+		lastPrompt, err := time.Parse(time.RFC3339, s.LastStarPrompt)
+		if err == nil && now.Sub(lastPrompt) < 10*24*time.Hour {
+			return false
+		}
+	}
+
+	// Record that we're showing the prompt
+	s.LastStarPrompt = now.Format(time.RFC3339)
+	_ = s.Save()
+	return true
+}
+
+// DismissStarNudge hides the banner for 10 more days.
+func (s *Store) DismissStarNudge() {
+	s.LastStarPrompt = time.Now().UTC().Format(time.RFC3339)
+}
+
+// MarkStarred permanently hides the star banner (trusts the user).
+func (s *Store) MarkStarred() {
+	s.StarDismissed = true
+}
+
+// =====================================================================
+// PENDING INIT (from `claix init`)
+// =====================================================================
+
+// SetPendingInit saves metadata that will be applied to the next session
+// started in the given working directory.
+func (s *Store) SetPendingInit(title string, tags []string, cwd string) {
+	s.PendingInit = &PendingInit{
+		Title:     title,
+		Tags:      tags,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Cwd:       cwd,
+	}
+}
+
+// ConsumePendingInit returns and clears the pending init if it matches
+// the given working directory. Returns nil if no match.
+func (s *Store) ConsumePendingInit(cwd string) *PendingInit {
+	if s.PendingInit == nil {
+		return nil
+	}
+	if s.PendingInit.Cwd == cwd {
+		pi := s.PendingInit
+		s.PendingInit = nil
+		return pi
+	}
+	return nil
 }
 
 // =====================================================================

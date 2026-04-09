@@ -1,6 +1,7 @@
 package claix
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -30,6 +31,9 @@ import (
 
 	// This imports our TUI package — the interactive Bubbletea interface.
 	"github.com/sayantanghosh-in/claix/internal/tui"
+
+	// Shared utilities (hyperlinks, browser opening)
+	"github.com/sayantanghosh-in/claix/internal/util"
 )
 
 var version = "dev"
@@ -42,6 +46,19 @@ var rootCmd = &cobra.Command{
 A terminal UI for managing Claude Code sessions across all your projects.
 Search, organize, tag, and resume any session from anywhere.`,
 	Run: func(cmd *cobra.Command, args []string) {
+		// First-run detection: if hooks aren't installed yet, offer to set them up.
+		// This replaces the need for a separate `claix install` step for most users.
+		if !hooksInstalled() {
+			reader := bufio.NewReader(os.Stdin)
+			fmt.Print("Set up auto-sync hooks for Claude Code? (Y/n) ")
+			answer, _ := reader.ReadString('\n')
+			answer = strings.TrimSpace(strings.ToLower(answer))
+			if answer == "" || answer == "y" || answer == "yes" {
+				installHooks()
+				fmt.Println()
+			}
+		}
+
 		// Load the saved theme before launching the TUI.
 		// If no theme is set, ApplyTheme falls back to "default".
 		if s, err := store.Load(); err == nil && s.Theme != "" {
@@ -142,6 +159,7 @@ var listCmd = &cobra.Command{
 		}
 
 		w.Flush()
+		printProjectLink()
 	},
 }
 
@@ -245,6 +263,7 @@ var searchCmd = &cobra.Command{
 				status, shortID, project, branch, lastActive, title)
 		}
 		w.Flush()
+		printProjectLink()
 	},
 }
 
@@ -495,6 +514,7 @@ var statsCmd = &cobra.Command{
 				shortID, project, date, statusIcon, statusText)
 			shown++
 		}
+		printProjectLink()
 	},
 }
 
@@ -545,7 +565,39 @@ var syncCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// Step 3: Count unique projects for the summary message.
+		// Step 3: Consume any pending init metadata (from `claix init`).
+		// Match the pending init to the newest session in the same working directory.
+		st, _ := store.Load()
+		if st != nil && st.PendingInit != nil {
+			cwd := st.PendingInit.Cwd
+			pi := st.ConsumePendingInit(cwd)
+			if pi != nil {
+				// Find the newest session in the same cwd
+				var newest *scanner.Session
+				for i := range sessions {
+					if sessions[i].ProjectPath == cwd {
+						if newest == nil || sessions[i].LastActive > newest.LastActive {
+							newest = &sessions[i]
+						}
+					}
+				}
+				if newest != nil {
+					if pi.Title != "" {
+						// Title is stored in the session's .jsonl by Claude, but we can
+						// apply tags from the pending init to the store metadata.
+					}
+					for _, tag := range pi.Tags {
+						st.AddTag(newest.ID, tag)
+					}
+					_ = st.Save()
+					if len(pi.Tags) > 0 {
+						fmt.Printf("\n  Applied tags %v to session %s\n", pi.Tags, newest.ID[:8])
+					}
+				}
+			}
+		}
+
+		// Step 4: Count unique projects for the summary message.
 		// We use a map as a set (map[string]bool) — adding a key twice is harmless.
 		projectSet := make(map[string]bool)
 		for _, s := range sessions {
@@ -555,6 +607,7 @@ var syncCmd = &cobra.Command{
 		}
 
 		fmt.Printf("\rSynced %d sessions across %d projects\n", len(sessions), len(projectSet))
+		printProjectLink()
 	},
 }
 
@@ -597,6 +650,7 @@ Output includes: metadata, conversation highlights, files changed, and PR links.
 		// Users can redirect this to a file: claix export abc123 > session.md
 		markdown := export.Export(*matched)
 		fmt.Print(markdown)
+		printProjectLink()
 	},
 }
 
@@ -604,159 +658,18 @@ var installCmd = &cobra.Command{
 	Use:   "install",
 	Short: "Set up Claude Code hooks and MCP integration",
 	Run: func(cmd *cobra.Command, args []string) {
-		// The install command configures Claude Code to automatically sync
-		// claix's session index after each conversation. It does this by
-		// adding a hook to ~/.claude/settings.json.
-		//
-		// Claude Code hooks let you run shell commands at specific lifecycle
-		// points. We use "Stop" (fires when a session ends) to run `claix sync`.
-
 		fmt.Println("Setting up claix hooks for Claude Code...")
 		fmt.Println()
 
-		// ── Step 1: Locate settings.json ──
-		// Claude Code stores its user-level settings in ~/.claude/settings.json.
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "Error: could not determine home directory:", err)
-			os.Exit(1)
-		}
-		settingsPath := filepath.Join(homeDir, ".claude", "settings.json")
+		installHooks()
 
-		// ── Step 2: Read existing settings (or start with empty object) ──
-		// We use map[string]interface{} (like Record<string, any> in TypeScript) because
-		// settings.json has a dynamic structure — we don't want to define a struct
-		// for every possible Claude Code setting, just preserve what's already there.
-		var settings map[string]interface{}
-
-		data, err := os.ReadFile(settingsPath)
-		if err != nil {
-			if os.IsNotExist(err) {
-				// No settings file yet — we'll create one from scratch.
-				settings = make(map[string]interface{})
-			} else {
-				fmt.Fprintln(os.Stderr, "Error reading settings:", err)
-				os.Exit(1)
-			}
-		} else {
-			// json.Unmarshal into map[string]interface{} preserves unknown fields.
-			// This is important — we don't want to accidentally delete the user's
-			// existing settings by only serializing fields we know about.
-			if err := json.Unmarshal(data, &settings); err != nil {
-				fmt.Fprintln(os.Stderr, "Error parsing settings.json:", err)
-				fmt.Fprintln(os.Stderr, "Please check the file is valid JSON:", settingsPath)
-				os.Exit(1)
-			}
-		}
-
-		// ── Step 3: Add/update the hooks section ──
-		// Claude Code hooks format:
-		//   "hooks": {
-		//     "Stop": [
-		//       { "type": "command", "command": "claix sync" }
-		//     ]
-		//   }
-		//
-		// "Stop" fires when Claude Code finishes a session — perfect time to re-index.
-
-		// Get or create the "hooks" map.
-		// Type assertions in Go: settings["hooks"] returns interface{} (like `any` in TS).
-		// We need to assert it's a map[string]interface{} to work with it.
-		// The comma-ok pattern (value, ok := ...) tells us if the assertion succeeded.
-		hooks, ok := settings["hooks"].(map[string]interface{})
-		if !ok {
-			// Either "hooks" doesn't exist or isn't an object — create a new one.
-			hooks = make(map[string]interface{})
-		}
-
-		// Claude Code hooks format requires a matcher + hooks array:
-		// {
-		//   "hooks": {
-		//     "Stop": [
-		//       {
-		//         "matcher": "",
-		//         "hooks": [
-		//           { "type": "command", "command": "claix sync" }
-		//         ]
-		//       }
-		//     ]
-		//   }
-		// }
-		// "matcher" is empty string to match all events. "hooks" is the array of commands.
-
-		// Check if a Stop hook already contains our command to avoid duplicates.
-		alreadyInstalled := false
-		if stopEntries, ok := hooks["Stop"].([]interface{}); ok {
-			for _, entry := range stopEntries {
-				if entryMap, ok := entry.(map[string]interface{}); ok {
-					if innerHooks, ok := entryMap["hooks"].([]interface{}); ok {
-						for _, h := range innerHooks {
-							if hookMap, ok := h.(map[string]interface{}); ok {
-								if hookMap["command"] == "claix sync" {
-									alreadyInstalled = true
-									break
-								}
-							}
-						}
-					}
-				}
-				if alreadyInstalled { break }
-			}
-		}
-
-		if alreadyInstalled {
-			fmt.Println("  Hook already installed -- nothing to do.")
-		} else {
-			// Build the hook entry in the correct format
-			claixHookEntry := map[string]interface{}{
-				"matcher": "",
-				"hooks": []interface{}{
-					map[string]interface{}{
-						"type":    "command",
-						"command": "claix sync",
-					},
-				},
-			}
-
-			// Append our hook entry to the Stop array.
-			stopEntries, _ := hooks["Stop"].([]interface{})
-			stopEntries = append(stopEntries, claixHookEntry)
-			hooks["Stop"] = stopEntries
-			settings["hooks"] = hooks
-
-			// ── Step 4: Write back settings.json ──
-			// json.MarshalIndent produces pretty-printed JSON (like JSON.stringify(obj, null, 2)).
-			out, err := json.MarshalIndent(settings, "", "  ")
-			if err != nil {
-				fmt.Fprintln(os.Stderr, "Error encoding settings:", err)
-				os.Exit(1)
-			}
-
-			// Ensure the .claude directory exists (it should, but be safe).
-			claudeDir := filepath.Join(homeDir, ".claude")
-			if err := os.MkdirAll(claudeDir, 0o755); err != nil {
-				fmt.Fprintln(os.Stderr, "Error creating .claude directory:", err)
-				os.Exit(1)
-			}
-
-			// Write the updated settings back to disk.
-			// 0o644 = owner read/write, group read, others read.
-			if err := os.WriteFile(settingsPath, out, 0o644); err != nil {
-				fmt.Fprintln(os.Stderr, "Error writing settings:", err)
-				os.Exit(1)
-			}
-
-			fmt.Println("  Added 'Stop' hook: claix sync")
-			fmt.Printf("  Settings updated: %s\n", settingsPath)
-		}
-
-		// ── Step 5: Print MCP setup note ──
 		fmt.Println()
 		fmt.Println("MCP Integration:")
-		fmt.Println("  MCP server setup is coming soon. This will allow Claude Code")
-		fmt.Println("  to query your session history directly within conversations.")
+		fmt.Println("  To enable mid-session tagging, add to ~/.claude/settings.json:")
+		fmt.Printf("  \"mcpServers\": { \"claix\": { \"command\": \"claix\", \"args\": [\"mcp-server\"] } }\n")
 		fmt.Println()
-		fmt.Println("Done! claix will now auto-sync after each Claude Code session.")
+		fmt.Println("Done! claix will auto-sync after sessions and show a context hint on startup.")
+		printProjectLink()
 	},
 }
 
@@ -823,6 +736,7 @@ Examples:
 
 		fmt.Printf("Theme set to: %s\n", themeName)
 		fmt.Println("Launch claix to see the new theme.")
+		printProjectLink()
 	},
 }
 
@@ -930,9 +844,61 @@ var uninstallCmd = &cobra.Command{
 		}
 
 		fmt.Printf("  Removed %d claix hook(s) from Stop.\n", removed)
+
+		// Also remove SessionStart hooks containing "claix context"
+		startRemoved := 0
+		if startEntries, ok := hooks["SessionStart"].([]interface{}); ok {
+			var remaining2 []interface{}
+			for _, entry := range startEntries {
+				isClaix := false
+				if entryMap, ok := entry.(map[string]interface{}); ok {
+					if innerHooks, ok := entryMap["hooks"].([]interface{}); ok {
+						for _, h := range innerHooks {
+							if hookMap, ok := h.(map[string]interface{}); ok {
+								if hookMap["command"] == "claix context" {
+									isClaix = true
+									break
+								}
+							}
+						}
+					}
+				}
+				if isClaix {
+					startRemoved++
+				} else {
+					remaining2 = append(remaining2, entry)
+				}
+			}
+			if len(remaining2) == 0 {
+				delete(hooks, "SessionStart")
+			} else {
+				hooks["SessionStart"] = remaining2
+			}
+		}
+		if startRemoved > 0 {
+			fmt.Printf("  Removed %d claix hook(s) from SessionStart.\n", startRemoved)
+		}
+
+		if len(hooks) == 0 {
+			delete(settings, "hooks")
+		} else {
+			settings["hooks"] = hooks
+		}
+
+		outBytes, marshalErr := json.MarshalIndent(settings, "", "  ")
+		if marshalErr != nil {
+			fmt.Fprintln(os.Stderr, "Error encoding settings:", marshalErr)
+			os.Exit(1)
+		}
+		if writeErr := os.WriteFile(settingsPath, outBytes, 0o644); writeErr != nil {
+			fmt.Fprintln(os.Stderr, "Error writing settings:", writeErr)
+			os.Exit(1)
+		}
+
 		fmt.Printf("  Settings updated: %s\n", settingsPath)
 		fmt.Println()
 		fmt.Println("Done! claix hooks have been removed from Claude Code.")
+		printProjectLink()
 	},
 }
 
@@ -966,7 +932,266 @@ Available tools:
 	},
 }
 
+// initCmd sets session metadata (title, tags) before launching Claude Code.
+// This helps users organize sessions from the start instead of tagging later.
+var initCmd = &cobra.Command{
+	Use:   "init",
+	Short: "Set session title and tags, then launch Claude Code",
+	Long: `Set session metadata before starting a Claude Code session.
+
+The title and tags are saved and automatically applied to the session
+after it syncs. This helps you organize sessions from the start.
+
+Examples:
+  claix init                                    # Interactive prompts
+  claix init --title "auth refactor"            # Just a title
+  claix init --title "bugfix" --tags "urgent"   # Title + tags`,
+	Run: func(cmd *cobra.Command, args []string) {
+		title, _ := cmd.Flags().GetString("title")
+		tagsStr, _ := cmd.Flags().GetString("tags")
+
+		// Interactive mode if no flags provided
+		if !cmd.Flags().Changed("title") && !cmd.Flags().Changed("tags") {
+			reader := bufio.NewReader(os.Stdin)
+
+			fmt.Print("Session title (optional): ")
+			titleInput, _ := reader.ReadString('\n')
+			title = strings.TrimSpace(titleInput)
+
+			fmt.Print("Tags (comma-separated, optional): ")
+			tagsInput, _ := reader.ReadString('\n')
+			tagsStr = strings.TrimSpace(tagsInput)
+		}
+
+		// Parse tags from comma-separated string
+		var tags []string
+		if tagsStr != "" {
+			for _, t := range strings.Split(tagsStr, ",") {
+				t = strings.TrimSpace(t)
+				if t != "" {
+					tags = append(tags, t)
+				}
+			}
+		}
+
+		// Save pending init to store
+		if title != "" || len(tags) > 0 {
+			s, err := store.Load()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Warning: could not save session metadata:", err)
+			} else {
+				cwd, _ := os.Getwd()
+				s.SetPendingInit(title, tags, cwd)
+				_ = s.Save()
+				if title != "" {
+					fmt.Printf("Title: %s\n", title)
+				}
+				if len(tags) > 0 {
+					fmt.Printf("Tags: %s\n", strings.Join(tags, ", "))
+				}
+				fmt.Println("Metadata saved. Starting Claude Code...")
+			}
+		} else {
+			fmt.Println("No metadata set. Starting Claude Code...")
+		}
+
+		fmt.Println()
+
+		// Launch Claude Code in the current directory
+		claude := exec.Command("claude")
+		claude.Stdin = os.Stdin
+		claude.Stdout = os.Stdout
+		claude.Stderr = os.Stderr
+		if err := claude.Run(); err != nil {
+			fmt.Fprintln(os.Stderr, "Error launching Claude Code:", err)
+			os.Exit(1)
+		}
+	},
+}
+
+// contextCmd outputs a gentle hint for the SessionStart hook.
+// This gets injected into Claude's context when a new session starts,
+// nudging the user to describe what they're working on.
+// Hidden from help since it's meant to be called by hooks, not users.
+var contextCmd = &cobra.Command{
+	Use:    "context",
+	Short:  "Output session context hint (used by SessionStart hook)",
+	Hidden: true,
+	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Println("[claix] Tip: You can say 'tag this session as <topic>' anytime to help organize your sessions later.")
+	},
+}
+
+// hooksInstalled checks if claix hooks are already configured in Claude Code settings.
+func hooksInstalled() bool {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	data, err := os.ReadFile(filepath.Join(homeDir, ".claude", "settings.json"))
+	if err != nil {
+		return false
+	}
+	var settings map[string]interface{}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return false
+	}
+	hooks, ok := settings["hooks"].(map[string]interface{})
+	if !ok {
+		return false
+	}
+	stopEntries, ok := hooks["Stop"].([]interface{})
+	if !ok {
+		return false
+	}
+	for _, entry := range stopEntries {
+		if entryMap, ok := entry.(map[string]interface{}); ok {
+			if innerHooks, ok := entryMap["hooks"].([]interface{}); ok {
+				for _, h := range innerHooks {
+					if hookMap, ok := h.(map[string]interface{}); ok {
+						if hookMap["command"] == "claix sync" {
+							return true
+						}
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+// installHooks adds claix hooks to Claude Code settings.json.
+// Called by both the first-run prompt and `claix install`.
+func installHooks() {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error: could not determine home directory:", err)
+		return
+	}
+	settingsPath := filepath.Join(homeDir, ".claude", "settings.json")
+
+	var settings map[string]interface{}
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			settings = make(map[string]interface{})
+		} else {
+			fmt.Fprintln(os.Stderr, "Error reading settings:", err)
+			return
+		}
+	} else {
+		if err := json.Unmarshal(data, &settings); err != nil {
+			fmt.Fprintln(os.Stderr, "Error parsing settings.json:", err)
+			return
+		}
+	}
+
+	hooks, ok := settings["hooks"].(map[string]interface{})
+	if !ok {
+		hooks = make(map[string]interface{})
+	}
+
+	// Add Stop hook (claix sync)
+	alreadyInstalled := false
+	if stopEntries, ok := hooks["Stop"].([]interface{}); ok {
+		for _, entry := range stopEntries {
+			if entryMap, ok := entry.(map[string]interface{}); ok {
+				if innerHooks, ok := entryMap["hooks"].([]interface{}); ok {
+					for _, h := range innerHooks {
+						if hookMap, ok := h.(map[string]interface{}); ok {
+							if hookMap["command"] == "claix sync" {
+								alreadyInstalled = true
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if !alreadyInstalled {
+		claixHookEntry := map[string]interface{}{
+			"matcher": "",
+			"hooks": []interface{}{
+				map[string]interface{}{
+					"type":    "command",
+					"command": "claix sync",
+				},
+			},
+		}
+		stopEntries, _ := hooks["Stop"].([]interface{})
+		stopEntries = append(stopEntries, claixHookEntry)
+		hooks["Stop"] = stopEntries
+		fmt.Println("  Added 'Stop' hook: claix sync")
+	}
+
+	// Add SessionStart hook (claix context)
+	startInstalled := false
+	if startEntries, ok := hooks["SessionStart"].([]interface{}); ok {
+		for _, entry := range startEntries {
+			if entryMap, ok := entry.(map[string]interface{}); ok {
+				if innerHooks, ok := entryMap["hooks"].([]interface{}); ok {
+					for _, h := range innerHooks {
+						if hookMap, ok := h.(map[string]interface{}); ok {
+							if hookMap["command"] == "claix context" {
+								startInstalled = true
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if !startInstalled {
+		sessionStartEntry := map[string]interface{}{
+			"matcher": "startup",
+			"hooks": []interface{}{
+				map[string]interface{}{
+					"type":    "command",
+					"command": "claix context",
+				},
+			},
+		}
+		startEntries, _ := hooks["SessionStart"].([]interface{})
+		startEntries = append(startEntries, sessionStartEntry)
+		hooks["SessionStart"] = startEntries
+		fmt.Println("  Added 'SessionStart' hook: claix context")
+	}
+
+	if alreadyInstalled && startInstalled {
+		fmt.Println("  Hooks already installed — nothing to do.")
+		return
+	}
+
+	settings["hooks"] = hooks
+
+	claudeDir := filepath.Join(homeDir, ".claude")
+	_ = os.MkdirAll(claudeDir, 0o755)
+
+	out, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error encoding settings:", err)
+		return
+	}
+	if err := os.WriteFile(settingsPath, out, 0o644); err != nil {
+		fmt.Fprintln(os.Stderr, "Error writing settings:", err)
+		return
+	}
+	fmt.Printf("  Settings updated: %s\n", settingsPath)
+}
+
+// printProjectLink prints the GitHub repo link at the end of CLI commands.
+func printProjectLink() {
+	link := util.MakeHyperlink(util.RepoURL, "github.com/sayantanghosh-in/claix")
+	fmt.Printf("\n%s\n", link)
+}
+
 func init() {
+	// Register init command flags
+	initCmd.Flags().String("title", "", "Session title")
+	initCmd.Flags().String("tags", "", "Comma-separated tags")
+
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(listCmd)
 	rootCmd.AddCommand(searchCmd)
@@ -977,6 +1202,8 @@ func init() {
 	rootCmd.AddCommand(installCmd)
 	rootCmd.AddCommand(uninstallCmd)
 	rootCmd.AddCommand(themeCmd)
+	rootCmd.AddCommand(initCmd)
+	rootCmd.AddCommand(contextCmd)
 	rootCmd.AddCommand(mcpServerCmd)
 }
 

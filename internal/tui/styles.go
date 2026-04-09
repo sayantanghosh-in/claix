@@ -14,13 +14,14 @@ import "github.com/charmbracelet/lipgloss"
 var (
 	colorPrimary   = lipgloss.Color("#7C3AED") // Purple — brand color
 	colorSecondary = lipgloss.Color("#06B6D4") // Cyan — accents, selected items
-	colorMuted     = lipgloss.Color("#6B7280") // Gray — secondary text
+	colorMuted     = lipgloss.Color("#9CA3AF") // Gray — secondary text (brightened for dark terminals)
 	colorSuccess   = lipgloss.Color("#10B981") // Green — done status, branches
 	colorWarning   = lipgloss.Color("#F59E0B") // Amber — active status, warnings
 	colorText      = lipgloss.Color("#E5E7EB") // Light gray — main text
-	colorDim       = lipgloss.Color("#4B5563") // Dark gray — very subtle text
+	colorDim       = lipgloss.Color("#6B7280") // Dark gray — subtle text (brightened from #4B5563)
 	colorPR        = lipgloss.Color("#EC4899") // Pink — PR links (stand out)
 	colorSparkline = lipgloss.Color("#818CF8") // Indigo — sparkline bars
+	colorStar      = lipgloss.Color("#FBBF24") // Gold — star nudge banner
 )
 
 // =====================================================================
@@ -127,4 +128,9 @@ var (
 	// ── Generic input bar style (for tag/note input at bottom) ──
 	inputBarStyle = lipgloss.NewStyle().
 			Foreground(colorText)
+
+	// ── Star nudge banner ──
+	starBannerStyle = lipgloss.NewStyle().
+			Foreground(colorStar).
+			Bold(true)
 )
