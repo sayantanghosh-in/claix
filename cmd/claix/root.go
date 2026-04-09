@@ -845,6 +845,33 @@ var uninstallCmd = &cobra.Command{
 
 		fmt.Printf("  Removed %d claix hook(s) from Stop.\n", removed)
 
+		// Clean up legacy SessionStart hooks (removed in v0.1.0)
+		if startEntries, ok := hooks["SessionStart"].([]interface{}); ok {
+			var remaining2 []interface{}
+			for _, entry := range startEntries {
+				isClaix := false
+				if entryMap, ok := entry.(map[string]interface{}); ok {
+					if innerHooks, ok := entryMap["hooks"].([]interface{}); ok {
+						for _, h := range innerHooks {
+							if hookMap, ok := h.(map[string]interface{}); ok {
+								if hookMap["command"] == "claix context" {
+									isClaix = true
+								}
+							}
+						}
+					}
+				}
+				if !isClaix {
+					remaining2 = append(remaining2, entry)
+				}
+			}
+			if len(remaining2) == 0 {
+				delete(hooks, "SessionStart")
+			} else {
+				hooks["SessionStart"] = remaining2
+			}
+		}
+
 		if len(hooks) == 0 {
 			delete(settings, "hooks")
 		} else {
