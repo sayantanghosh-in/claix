@@ -1,11 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="460" height="130" viewBox="0 0 460 130">
-  <text x="230" y="20" font-family="'Courier New', Courier, monospace" font-size="12" fill="#22D3EE" text-anchor="middle" xml:space="preserve">
-    <tspan x="230" dy="0"> ██████╗ ██╗       █████╗  ██╗ ██╗  ██╗</tspan>
-    <tspan x="230" dy="15">██╔════╝ ██║      ██╔══██╗ ██║  ██╗██╔╝</tspan>
-    <tspan x="230" dy="15">██║      ██║      ███████║ ██║   ████╔╝</tspan>
-    <tspan x="230" dy="15">██║      ██║      ██╔══██║ ██║  ██╔╝██╗</tspan>
-    <tspan x="230" dy="15">╚██████╗ ███████╗ ██║  ██║ ██║ ██╔╝  ██╗</tspan>
-    <tspan x="230" dy="15"> ╚═════╝ ╚══════╝ ╚═╝  ╚═╝ ╚═╝ ╚═╝  ╚═╝</tspan>
+  <text x="245" y="20" font-family="'Courier New', Courier, monospace" font-size="12" fill="#22D3EE" text-anchor="middle" xml:space="preserve">
+    <tspan x="245" dy="0"> ██████╗ ██╗       █████╗  ██╗ ██╗  ██╗</tspan>
+    <tspan x="245" dy="15">██╔════╝ ██║      ██╔══██╗ ██║  ██╗██╔╝</tspan>
+    <tspan x="245" dy="15">██║      ██║      ███████║ ██║   ████╔╝</tspan>
+    <tspan x="245" dy="15">██║      ██║      ██╔══██║ ██║  ██╔╝██╗</tspan>
+    <tspan x="245" dy="15">╚██████╗ ███████╗ ██║  ██║ ██║ ██╔╝  ██╗</tspan>
+    <tspan x="245" dy="15"> ╚═════╝ ╚══════╝ ╚═╝  ╚═╝ ╚═╝ ╚═╝  ╚═╝</tspan>
   </text>
   <text x="230" y="120" font-family="'Courier New', Courier, monospace" font-size="13" fill="#9CA3AF" font-style="italic" text-anchor="middle">make your Claude sessions click</text>
 </svg>
