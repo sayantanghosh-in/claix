@@ -668,7 +668,7 @@ var installCmd = &cobra.Command{
 		fmt.Println("  To enable mid-session tagging, add to ~/.claude/settings.json:")
 		fmt.Printf("  \"mcpServers\": { \"claix\": { \"command\": \"claix\", \"args\": [\"mcp-server\"] } }\n")
 		fmt.Println()
-		fmt.Println("Done! claix will auto-sync after sessions and show a context hint on startup.")
+		fmt.Println("Done! claix will auto-sync after every Claude Code session.")
 		printProjectLink()
 	},
 }
@@ -845,40 +845,6 @@ var uninstallCmd = &cobra.Command{
 
 		fmt.Printf("  Removed %d claix hook(s) from Stop.\n", removed)
 
-		// Also remove SessionStart hooks containing "claix context"
-		startRemoved := 0
-		if startEntries, ok := hooks["SessionStart"].([]interface{}); ok {
-			var remaining2 []interface{}
-			for _, entry := range startEntries {
-				isClaix := false
-				if entryMap, ok := entry.(map[string]interface{}); ok {
-					if innerHooks, ok := entryMap["hooks"].([]interface{}); ok {
-						for _, h := range innerHooks {
-							if hookMap, ok := h.(map[string]interface{}); ok {
-								if hookMap["command"] == "claix context" {
-									isClaix = true
-									break
-								}
-							}
-						}
-					}
-				}
-				if isClaix {
-					startRemoved++
-				} else {
-					remaining2 = append(remaining2, entry)
-				}
-			}
-			if len(remaining2) == 0 {
-				delete(hooks, "SessionStart")
-			} else {
-				hooks["SessionStart"] = remaining2
-			}
-		}
-		if startRemoved > 0 {
-			fmt.Printf("  Removed %d claix hook(s) from SessionStart.\n", startRemoved)
-		}
-
 		if len(hooks) == 0 {
 			delete(settings, "hooks")
 		} else {
@@ -1009,19 +975,6 @@ Examples:
 	},
 }
 
-// contextCmd outputs a gentle hint for the SessionStart hook.
-// This gets injected into Claude's context when a new session starts,
-// nudging the user to describe what they're working on.
-// Hidden from help since it's meant to be called by hooks, not users.
-var contextCmd = &cobra.Command{
-	Use:    "context",
-	Short:  "Output session context hint (used by SessionStart hook)",
-	Hidden: true,
-	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("[claix] Tip: You can say 'tag this session as <topic>' anytime to help organize your sessions later.")
-	},
-}
-
 // hooksInstalled checks if claix hooks are already configured in Claude Code settings.
 func hooksInstalled() bool {
 	homeDir, err := os.UserHomeDir()
@@ -1125,41 +1078,7 @@ func installHooks() {
 		fmt.Println("  Added 'Stop' hook: claix sync")
 	}
 
-	// Add SessionStart hook (claix context)
-	startInstalled := false
-	if startEntries, ok := hooks["SessionStart"].([]interface{}); ok {
-		for _, entry := range startEntries {
-			if entryMap, ok := entry.(map[string]interface{}); ok {
-				if innerHooks, ok := entryMap["hooks"].([]interface{}); ok {
-					for _, h := range innerHooks {
-						if hookMap, ok := h.(map[string]interface{}); ok {
-							if hookMap["command"] == "claix context" {
-								startInstalled = true
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-
-	if !startInstalled {
-		sessionStartEntry := map[string]interface{}{
-			"matcher": "",
-			"hooks": []interface{}{
-				map[string]interface{}{
-					"type":    "command",
-					"command": "claix context",
-				},
-			},
-		}
-		startEntries, _ := hooks["SessionStart"].([]interface{})
-		startEntries = append(startEntries, sessionStartEntry)
-		hooks["SessionStart"] = startEntries
-		fmt.Println("  Added 'SessionStart' hook: claix context")
-	}
-
-	if alreadyInstalled && startInstalled {
+	if alreadyInstalled {
 		fmt.Println("  Hooks already installed — nothing to do.")
 		return
 	}
@@ -1203,7 +1122,6 @@ func init() {
 	rootCmd.AddCommand(uninstallCmd)
 	rootCmd.AddCommand(themeCmd)
 	rootCmd.AddCommand(initCmd)
-	rootCmd.AddCommand(contextCmd)
 	rootCmd.AddCommand(mcpServerCmd)
 }
 
